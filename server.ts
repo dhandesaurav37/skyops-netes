@@ -83,6 +83,30 @@ function agentAuth(req: AgentRequest, res: Response, next: NextFunction) {
   next();
 }
 
+// Helper to resolve public API / SaaS endpoint URL for remote Kubernetes agents
+function getPublicServerUrl(req?: Request): string {
+  // If explicitly configured in environment:
+  if (
+    process.env.SKYOPS_API_URL &&
+    process.env.SKYOPS_API_URL.startsWith('http') &&
+    !process.env.SKYOPS_API_URL.includes('localhost') &&
+    process.env.SKYOPS_API_URL !== 'https://skyops.ai.studio'
+  ) {
+    return process.env.SKYOPS_API_URL.replace(/\/+$/, '');
+  }
+  if (process.env.APP_URL && process.env.APP_URL.startsWith('http') && !process.env.APP_URL.includes('localhost')) {
+    return process.env.APP_URL.replace(/\/+$/, '');
+  }
+  if (req) {
+    const forwardedHost = (req.headers['x-forwarded-host'] as string) || (req.headers.host as string);
+    const forwardedProto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'https';
+    if (forwardedHost && !forwardedHost.includes('localhost')) {
+      return `${forwardedProto}://${forwardedHost}`.replace(/\/+$/, '');
+    }
+  }
+  return process.env.APP_URL || 'https://ais-dev-jrvfxsw2z3hsomufnmypgw-811563557432.asia-southeast1.run.app';
+}
+
 // ==========================================
 // API ROUTES (/api/v1/...)
 // ==========================================
@@ -135,8 +159,8 @@ app.post('/api/v1/clusters', tenantAuth, (req: AuthenticatedRequest, res) => {
     return res.status(400).json({ error: 'Cluster name is required' });
   }
 
-  const { cluster, rawToken, connectionCode } = store.createCluster(req.orgId!, name.trim(), description);
-  res.status(201).json({ cluster, token: rawToken, connectionCode });
+  const { cluster, rawToken, connectionCode, installKey } = store.createCluster(req.orgId!, name.trim(), description);
+  res.status(201).json({ cluster, token: rawToken, connectionCode, installKey });
 });
 
 app.get('/api/v1/clusters/:id', tenantAuth, (req: AuthenticatedRequest, res) => {
@@ -169,8 +193,8 @@ app.post('/api/v1/clusters/:id/regenerate-token', tenantAuth, (req: Authenticate
   }
 
   try {
-    const { cluster, rawToken, connectionCode } = store.regenerateClusterCredentials(req.params.id, req.orgId!);
-    res.json({ success: true, cluster, token: rawToken, connectionCode });
+    const { cluster, rawToken, connectionCode, installKey } = store.regenerateClusterCredentials(req.params.id, req.orgId!);
+    res.json({ success: true, cluster, token: rawToken, connectionCode, installKey });
   } catch (err: any) {
     res.status(404).json({ error: err?.message || 'Cluster not found' });
   }
@@ -207,9 +231,7 @@ app.get('/api/v1/clusters/:id/manifests', tenantAuth, (req: AuthenticatedRequest
     return res.status(404).json({ error: 'Cluster not found' });
   }
 
-  const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-  const host = req.headers.host || `localhost:${PORT}`;
-  const serverUrl = process.env.SKYOPS_API_URL || process.env.APP_URL || `${protocol}://${host}`;
+  const serverUrl = getPublicServerUrl(req);
   const token = cluster.agentToken || 'sky_agent_configured_token';
 
   const manifest = generateKubernetesManifest({
@@ -226,14 +248,16 @@ app.get('/api/v1/clusters/:id/manifests', tenantAuth, (req: AuthenticatedRequest
     serverUrl
   });
 
-  const installCommand = `kubectl apply -f ${serverUrl}/api/v1/clusters/${cluster.id}/manifest.yaml`;
-  const manifestDownloadUrl = `${serverUrl}/api/v1/clusters/${cluster.id}/manifest.yaml`;
+  const installKeyParam = cluster.installKey ? `?key=${cluster.installKey}` : '';
+  const installCommand = `kubectl apply -f ${serverUrl}/api/v1/clusters/${cluster.id}/manifest.yaml${installKeyParam}`;
+  const manifestDownloadUrl = `${serverUrl}/api/v1/clusters/${cluster.id}/manifest.yaml${installKeyParam}`;
 
   res.json({
     clusterId: cluster.id,
     clusterName: cluster.name,
     token,
     connectionCode: cluster.connectionCode,
+    installKey: cluster.installKey,
     serverUrl,
     agentVersion: 'v1.4.2',
     namespace: 'skyops-system',
@@ -246,15 +270,47 @@ app.get('/api/v1/clusters/:id/manifests', tenantAuth, (req: AuthenticatedRequest
 
 // Direct raw YAML manifest stream for direct kubectl apply
 app.get('/api/v1/clusters/:id/manifest.yaml', (req, res) => {
-  // Find cluster across store
-  const cluster = store.getCluster(req.params.id, req.query.orgId as string || 'org-acme-primary', true);
+  const { id } = req.params;
+  const providedKey = (req.query.key as string) || (req.query.installToken as string) || (req.query.token as string);
+  const authHeader = req.headers.authorization;
+
+  // Locate cluster
+  const cluster = store.getClusterByIdInternal(id);
   if (!cluster) {
-    return res.status(404).type('text/plain').send('# Error: Cluster not found');
+    return res.status(404).type('text/plain').send('# Error 404: Kubernetes cluster not found in SkyOps\n');
   }
 
-  const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-  const host = req.headers.host || `localhost:${PORT}`;
-  const serverUrl = process.env.SKYOPS_API_URL || process.env.APP_URL || `${protocol}://${host}`;
+  // Security Verification:
+  // 1. Verify if request provides a valid, unexpired short-lived installation key
+  // 2. OR verify if request provides valid Agent Bearer Token
+  // 3. OR verify if request is from an authenticated tenant session
+  let isAuthorized = false;
+
+  if (providedKey && cluster.installKey && cluster.installKey === providedKey) {
+    if (!cluster.installKeyExpiresAt || Date.now() <= cluster.installKeyExpiresAt) {
+      isAuthorized = true;
+    }
+  } else if (authHeader && authHeader.startsWith('Bearer ')) {
+    const bearer = authHeader.substring(7).trim();
+    const verified = store.authenticateAgentToken(bearer);
+    if (verified && verified.clusterId === id) {
+      isAuthorized = true;
+    }
+  } else if (req.headers['x-user-email']) {
+    // Authenticated dashboard user previewing manifest
+    isAuthorized = true;
+  }
+
+  if (!isAuthorized) {
+    return res
+      .status(403)
+      .type('text/plain')
+      .send(
+        '# Error 403 Forbidden: Invalid, missing, or expired manifest installation key.\n# Please generate a new install command from the SkyOps Dashboard.\n'
+      );
+  }
+
+  const serverUrl = getPublicServerUrl(req);
   const token = cluster.agentToken || 'sky_agent_configured_token';
 
   const manifest = generateKubernetesManifest({
@@ -266,7 +322,7 @@ app.get('/api/v1/clusters/:id/manifest.yaml', (req, res) => {
 
   res.setHeader('Content-Type', 'text/yaml; charset=utf-8');
   res.setHeader('Content-Disposition', `inline; filename="skyops-agent-${cluster.id}.yaml"`);
-  res.send(manifest);
+  res.status(200).send(manifest);
 });
 
 app.get('/api/v1/clusters/:id/resources', tenantAuth, (req: AuthenticatedRequest, res) => {

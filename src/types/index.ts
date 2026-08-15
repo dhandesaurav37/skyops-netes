@@ -61,6 +61,8 @@ export interface Cluster {
   createdAt: number;
   connectedAt?: number;
   agentToken?: string;
+  installKey?: string;
+  installKeyExpiresAt?: number;
   isSimulated?: boolean;
 }
 

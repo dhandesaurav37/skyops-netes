@@ -215,11 +215,15 @@ class DataStore {
     return sanitized as Cluster;
   }
 
+  public getClusterByIdInternal(clusterId: string): Cluster | null {
+    return this.clusters.get(clusterId) || null;
+  }
+
   public createCluster(
     orgId: string,
     name: string,
     description?: string
-  ): { cluster: Cluster; rawToken: string; connectionCode: string } {
+  ): { cluster: Cluster; rawToken: string; connectionCode: string; installKey: string } {
     const clusterId = `cls-${crypto.randomBytes(6).toString('hex')}`;
     const rawToken = `sky_agent_${crypto.randomBytes(24).toString('hex')}`;
     const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
@@ -228,6 +232,10 @@ class DataStore {
     const codeSuffix = crypto.randomBytes(4).toString('hex').toUpperCase();
     const connectionCode = `SKYOPS-CONNECT-${codeSuffix.slice(0, 4)}-${codeSuffix.slice(4)}`;
     const connectionCodeExpiresAt = Date.now() + 30 * 60 * 1000; // 30 minutes validity
+
+    // Generate secure, separate manifest installation key (prevents URL-leak of raw agent token)
+    const installKey = `sky_inst_${crypto.randomBytes(20).toString('hex')}`;
+    const installKeyExpiresAt = Date.now() + 60 * 60 * 1000; // 60 minutes validity
 
     const cluster: Cluster = {
       id: clusterId,
@@ -239,6 +247,8 @@ class DataStore {
       connectionState: 'pending',
       connectionCode,
       connectionCodeExpiresAt,
+      installKey,
+      installKeyExpiresAt,
       nodeCount: 0,
       podCount: 0,
       openIncidentCount: 0,
@@ -250,7 +260,7 @@ class DataStore {
     this.clusterTokens.set(tokenHash, { clusterId, orgId });
     this.resources.set(clusterId, []);
 
-    return { cluster, rawToken, connectionCode };
+    return { cluster, rawToken, connectionCode, installKey };
   }
 
   public verifyClusterConnection(clusterId: string, orgId: string, providedCode: string): Cluster {
@@ -278,13 +288,15 @@ class DataStore {
       throw new Error('Invalid connection code. Please enter the exact registration code generated for this cluster.');
     }
 
-    // Success: Activate connection and invalidate the single-use connection code
+    // Success: Activate connection and invalidate the single-use connection code and installKey
     cluster.status = 'HEALTHY';
     cluster.agentStatus = 'CONNECTED';
     cluster.connectionState = 'connected';
     cluster.connectedAt = Date.now();
     cluster.connectionCode = undefined;
     cluster.connectionCodeExpiresAt = undefined;
+    cluster.installKey = undefined;
+    cluster.installKeyExpiresAt = undefined;
 
     return cluster;
   }
@@ -292,7 +304,7 @@ class DataStore {
   public regenerateClusterCredentials(
     clusterId: string,
     orgId: string
-  ): { cluster: Cluster; rawToken: string; connectionCode: string } {
+  ): { cluster: Cluster; rawToken: string; connectionCode: string; installKey: string } {
     const cluster = this.clusters.get(clusterId);
     if (!cluster || cluster.orgId !== orgId) {
       throw new Error('Cluster not found');
@@ -313,9 +325,14 @@ class DataStore {
     const connectionCode = `SKYOPS-CONNECT-${codeSuffix.slice(0, 4)}-${codeSuffix.slice(4)}`;
     const connectionCodeExpiresAt = Date.now() + 30 * 60 * 1000;
 
+    const installKey = `sky_inst_${crypto.randomBytes(20).toString('hex')}`;
+    const installKeyExpiresAt = Date.now() + 60 * 60 * 1000;
+
     cluster.agentToken = rawToken;
     cluster.connectionCode = connectionCode;
     cluster.connectionCodeExpiresAt = connectionCodeExpiresAt;
+    cluster.installKey = installKey;
+    cluster.installKeyExpiresAt = installKeyExpiresAt;
     cluster.status = 'pending';
     cluster.agentStatus = 'PENDING';
     cluster.connectionState = 'pending';
@@ -323,7 +340,7 @@ class DataStore {
 
     this.clusterTokens.set(tokenHash, { clusterId, orgId });
 
-    return { cluster, rawToken, connectionCode };
+    return { cluster, rawToken, connectionCode, installKey };
   }
 
   public disconnectCluster(clusterId: string, orgId: string): boolean {
