@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { Button, Modal } from '../common/UI';
-import firebaseConfig from '../../../firebase-applet-config.json';
+import { resolvedFirebaseConfig } from '../../firebase';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -153,7 +153,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
           <div className="flex items-center gap-2 text-zinc-300">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
             <span>
-              Firebase Project: <strong className="text-zinc-100">{firebaseConfig.projectId}</strong>
+              Firebase Project: <strong className="text-zinc-100">{resolvedFirebaseConfig.projectId}</strong>
             </span>
           </div>
           <div className="flex items-center gap-1.5 text-zinc-400">

@@ -20,6 +20,20 @@ export const AppShell: React.FC = () => {
   const [isAddClusterOpen, setIsAddClusterOpen] = useState(false);
 
   // Global state
+  const defaultMetrics: OverviewMetrics = {
+    totalClusters: 0,
+    healthyClusters: 0,
+    warningClusters: 0,
+    criticalClusters: 0,
+    offlineClusters: 0,
+    openIncidents: 0,
+    criticalIncidents: 0,
+    highIncidents: 0,
+    mediumIncidents: 0,
+    lowIncidents: 0,
+    resolvedTodayCount: 0
+  };
+
   const [metrics, setMetrics] = useState<OverviewMetrics | null>(null);
   const [clusters, setClusters] = useState<Cluster[]>([]);
   const [incidents, setIncidents] = useState<Incident[]>([]);
@@ -28,14 +42,33 @@ export const AppShell: React.FC = () => {
 
   const fetchGlobalData = async () => {
     try {
-      setLoading(true);
-      const [overviewData, incidentsData] = await Promise.all([api.getOverview(), api.getIncidents()]);
-      setMetrics(overviewData.metrics);
-      setClusters(overviewData.clusters);
-      setRecentActivity(overviewData.recentActivity);
-      setIncidents(incidentsData);
+      const [overviewData, incidentsData] = await Promise.all([
+        api.getOverview().catch((err) => {
+          console.warn('Overview data fetch notice:', err?.message || err);
+          return null;
+        }),
+        api.getIncidents().catch((err) => {
+          console.warn('Incidents data fetch notice:', err?.message || err);
+          return [];
+        })
+      ]);
+
+      if (overviewData) {
+        setMetrics(overviewData.metrics || defaultMetrics);
+        setClusters(overviewData.clusters || []);
+        setRecentActivity(overviewData.recentActivity || []);
+      } else if (!metrics) {
+        setMetrics(defaultMetrics);
+      }
+
+      if (incidentsData) {
+        setIncidents(incidentsData);
+      }
     } catch (err) {
-      console.error('Failed to load SkyOps state:', err);
+      console.warn('SkyOps state sync notice:', err);
+      if (!metrics) {
+        setMetrics(defaultMetrics);
+      }
     } finally {
       setLoading(false);
     }

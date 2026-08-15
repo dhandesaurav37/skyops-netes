@@ -1,0 +1,49 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Authenticated user profile in SkyOps",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth user identifier"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Corporate user email"
+        },
+        "name": {
+          "type": "string",
+          "description": "Full name or persona title"
+        },
+        "photoURL": {
+          "type": "string",
+          "description": "Optional user avatar URL"
+        },
+        "isAnonymous": {
+          "type": "boolean",
+          "description": "Whether the user authenticated as a guest/anonymous"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp"
+        },
+        "lastLoginAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last login timestamp"
+        }
+      },
+      "required": ["uid", "email", "name"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile collection indexed by Firebase UID"
+    }
+  }
+}

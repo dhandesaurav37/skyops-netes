@@ -355,6 +355,21 @@ app.post('/api/v1/dev/simulate-scenario', tenantAuth, (req: AuthenticatedRequest
   res.json(result);
 });
 
+// --- API 404 Handler (ensures no /api/* route falls through to HTML SPA handler) ---
+app.all('/api/*', (req, res) => {
+  res.status(404).json({ error: `API route not found: ${req.method} ${req.path}` });
+});
+
+// --- API Global Error Handler ---
+app.use((err: any, req: Request, res: Response, next: NextFunction) => {
+  console.error('[SkyOps Server Error]', err);
+  if (req.path.startsWith('/api/')) {
+    res.status(500).json({ error: err?.message || 'Internal Server Error' });
+  } else {
+    next(err);
+  }
+});
+
 // ==========================================
 // VITE MIDDLEWARE / SPA STATIC HANDLER
 // ==========================================

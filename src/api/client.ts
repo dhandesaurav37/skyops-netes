@@ -40,6 +40,50 @@ class ApiClient {
     };
   }
 
+  /**
+   * Safe centralized request executor that gracefully parses JSON and handles HTML/proxy errors
+   */
+  private async request<T>(url: string, options: RequestInit = {}): Promise<T> {
+    const headers = {
+      ...this.getHeaders(),
+      ...(options.headers || {})
+    };
+
+    let res: Response;
+    try {
+      res = await fetch(url, { ...options, headers });
+    } catch (netErr: any) {
+      throw new Error(`Network connection error: ${netErr?.message || 'Failed to fetch'}`);
+    }
+
+    const text = await res.text();
+    let data: any;
+
+    if (text.trim().startsWith('<') || text.includes('<!DOCTYPE') || text.includes('<!doctype')) {
+      // HTML response received (e.g. 404 from static file server or SPA fallback)
+      if (!res.ok) {
+        throw new Error(`API error (${res.status} ${res.statusText})`);
+      }
+      throw new Error(`Received unexpected HTML response from ${url}`);
+    }
+
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch (parseErr) {
+      if (!res.ok) {
+        throw new Error(`API error (${res.status} ${res.statusText})`);
+      }
+      throw new Error(`Malformed JSON response from ${url}`);
+    }
+
+    if (!res.ok) {
+      const errMsg = data?.error || `API request failed with status ${res.status}`;
+      throw new Error(errMsg);
+    }
+
+    return data as T;
+  }
+
   // --- Auth & Session ---
   async getSession(): Promise<{
     user: User;
@@ -48,76 +92,53 @@ class ApiClient {
     role: Role;
     members: OrgMember[];
   }> {
-    const res = await fetch('/api/v1/auth/session', {
-      method: 'POST',
-      headers: this.getHeaders()
-    });
-    if (!res.ok) throw new Error(`Session fetch failed: ${res.statusText}`);
-    return res.json();
+    return this.request('/api/v1/auth/session', { method: 'POST' });
   }
 
   // --- Organizations ---
   async getOrganizations(): Promise<Organization[]> {
-    const res = await fetch('/api/v1/orgs', { headers: this.getHeaders() });
-    if (!res.ok) throw new Error('Failed to fetch organizations');
-    const data = await res.json();
+    const data = await this.request<{ organizations: Organization[] }>('/api/v1/orgs');
     return data.organizations;
   }
 
   async createOrganization(name: string): Promise<Organization> {
-    const res = await fetch('/api/v1/orgs', {
+    const data = await this.request<{ organization: Organization }>('/api/v1/orgs', {
       method: 'POST',
-      headers: this.getHeaders(),
       body: JSON.stringify({ name })
     });
-    if (!res.ok) throw new Error('Failed to create organization');
-    const data = await res.json();
     return data.organization;
   }
 
   // --- Clusters ---
   async getClusters(): Promise<Cluster[]> {
-    const res = await fetch('/api/v1/clusters', { headers: this.getHeaders() });
-    if (!res.ok) throw new Error('Failed to fetch clusters');
-    const data = await res.json();
+    const data = await this.request<{ clusters: Cluster[] }>('/api/v1/clusters');
     return data.clusters;
   }
 
   async createCluster(name: string, description?: string): Promise<{ cluster: Cluster; token: string }> {
-    const res = await fetch('/api/v1/clusters', {
+    return this.request<{ cluster: Cluster; token: string }>('/api/v1/clusters', {
       method: 'POST',
-      headers: this.getHeaders(),
       body: JSON.stringify({ name, description })
     });
-    if (!res.ok) throw new Error('Failed to create cluster');
-    return res.json();
   }
 
   async getCluster(id: string): Promise<Cluster> {
-    const res = await fetch(`/api/v1/clusters/${id}`, { headers: this.getHeaders() });
-    if (!res.ok) throw new Error('Failed to fetch cluster details');
-    const data = await res.json();
+    const data = await this.request<{ cluster: Cluster }>(`/api/v1/clusters/${id}`);
     return data.cluster;
   }
 
   async deleteCluster(id: string): Promise<void> {
-    const res = await fetch(`/api/v1/clusters/${id}`, {
-      method: 'DELETE',
-      headers: this.getHeaders()
+    await this.request<{ success: boolean }>(`/api/v1/clusters/${id}`, {
+      method: 'DELETE'
     });
-    if (!res.ok) throw new Error('Failed to delete cluster');
   }
 
   async getClusterManifests(clusterId: string): Promise<AgentManifestsResponse> {
-    const res = await fetch(`/api/v1/clusters/${clusterId}/manifests`, { headers: this.getHeaders() });
-    if (!res.ok) throw new Error('Failed to generate agent manifests');
-    return res.json();
+    return this.request<AgentManifestsResponse>(`/api/v1/clusters/${clusterId}/manifests`);
   }
 
   async getClusterResources(clusterId: string): Promise<KubernetesResource[]> {
-    const res = await fetch(`/api/v1/clusters/${clusterId}/resources`, { headers: this.getHeaders() });
-    if (!res.ok) throw new Error('Failed to fetch cluster resources');
-    const data = await res.json();
+    const data = await this.request<{ resources: KubernetesResource[] }>(`/api/v1/clusters/${clusterId}/resources`);
     return data.resources;
   }
 
@@ -137,16 +158,12 @@ class ApiClient {
     if (filters?.search) params.set('search', filters.search);
 
     const url = `/api/v1/incidents${params.toString() ? `?${params.toString()}` : ''}`;
-    const res = await fetch(url, { headers: this.getHeaders() });
-    if (!res.ok) throw new Error('Failed to fetch incidents');
-    const data = await res.json();
+    const data = await this.request<{ incidents: Incident[] }>(url);
     return data.incidents;
   }
 
   async getIncident(id: string): Promise<{ incident: Incident; timeline: TimelineEvent[]; notes: IncidentNote[] }> {
-    const res = await fetch(`/api/v1/incidents/${id}`, { headers: this.getHeaders() });
-    if (!res.ok) throw new Error('Failed to fetch incident details');
-    return res.json();
+    return this.request<{ incident: Incident; timeline: TimelineEvent[]; notes: IncidentNote[] }>(`/api/v1/incidents/${id}`);
   }
 
   async updateIncident(
@@ -158,24 +175,18 @@ class ApiClient {
       assignee?: { userId: string; name: string; email: string };
     }
   ): Promise<Incident> {
-    const res = await fetch(`/api/v1/incidents/${id}`, {
+    const data = await this.request<{ incident: Incident }>(`/api/v1/incidents/${id}`, {
       method: 'PATCH',
-      headers: this.getHeaders(),
       body: JSON.stringify(updates)
     });
-    if (!res.ok) throw new Error('Failed to update incident');
-    const data = await res.json();
     return data.incident;
   }
 
   async addIncidentNote(incidentId: string, content: string): Promise<IncidentNote> {
-    const res = await fetch(`/api/v1/incidents/${incidentId}/notes`, {
+    const data = await this.request<{ note: IncidentNote }>(`/api/v1/incidents/${incidentId}/notes`, {
       method: 'POST',
-      headers: this.getHeaders(),
       body: JSON.stringify({ content })
     });
-    if (!res.ok) throw new Error('Failed to add investigation note');
-    const data = await res.json();
     return data.note;
   }
 
@@ -194,9 +205,20 @@ class ApiClient {
       clusterId?: string;
     }>;
   }> {
-    const res = await fetch('/api/v1/overview', { headers: this.getHeaders() });
-    if (!res.ok) throw new Error('Failed to fetch overview metrics');
-    return res.json();
+    return this.request<{
+      metrics: OverviewMetrics;
+      clusters: Cluster[];
+      recentIncidents: Incident[];
+      recentActivity: Array<{
+        id: string;
+        type: string;
+        timestamp: number;
+        title: string;
+        description: string;
+        incidentId?: string;
+        clusterId?: string;
+      }>;
+    }>('/api/v1/overview');
   }
 
   // --- Development & QA Testing Simulation ---
@@ -211,13 +233,10 @@ class ApiClient {
       | 'PVCPending'
       | 'RecoverAll'
   ): Promise<{ success: boolean; message: string; incidentId?: string }> {
-    const res = await fetch('/api/v1/dev/simulate-scenario', {
+    return this.request<{ success: boolean; message: string; incidentId?: string }>('/api/v1/dev/simulate-scenario', {
       method: 'POST',
-      headers: this.getHeaders(),
       body: JSON.stringify({ clusterId, scenario })
     });
-    if (!res.ok) throw new Error('Failed to simulate scenario');
-    return res.json();
   }
 }
 
