@@ -1,0 +1,32 @@
+# Default values for skyops-agent
+replicaCount: 1
+
+image:
+  repository: ghcr.io/skyops-io/agent
+  pullPolicy: IfNotPresent
+  tag: "v1.4.2"
+
+clusterId: ""
+agentToken: ""
+serverUrl: "https://skyops.acme.corp"
+
+resources:
+  limits:
+    cpu: 250m
+    memory: 256Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi
+
+securityContext:
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  runAsNonRoot: true
+  runAsUser: 65532
+
+rbac:
+  create: true
+
+serviceAccount:
+  create: true
+  name: skyops-agent
