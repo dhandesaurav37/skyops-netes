@@ -5,15 +5,18 @@ import {
   Building2,
   CheckCircle2,
   ChevronDown,
+  KeyRound,
   LogOut,
   Plus,
   Server,
   Settings,
   Shield,
-  Terminal
+  Terminal,
+  UserCheck
 } from 'lucide-react';
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { AuthModal } from '../auth/AuthModal';
 
 export type NavigationTab = 'overview' | 'clusters' | 'incidents' | 'settings';
 
@@ -30,10 +33,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   openIncidentsCount = 0,
   onOpenAddCluster
 }) => {
-  const { currentOrg, organizations, switchOrganization, createOrganization, role, user, signOut } = useAuth();
+  const { currentOrg, organizations, switchOrganization, createOrganization, role, user, firebaseUser, signOut } = useAuth();
   const [isOrgDropdownOpen, setIsOrgDropdownOpen] = useState(false);
   const [isCreatingOrg, setIsCreatingOrg] = useState(false);
   const [newOrgName, setNewOrgName] = useState('');
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
   const handleCreateOrg = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -210,24 +214,46 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* User Footer & Status */}
-      <div className="px-4 py-3 border-t border-zinc-800/80 bg-zinc-950/80 flex items-center justify-between">
-        <div className="flex items-center gap-2.5 overflow-hidden">
-          <div className="w-7 h-7 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center text-xs font-mono text-zinc-300 font-semibold shrink-0">
-            {user?.name?.charAt(0) || 'U'}
-          </div>
-          <div className="truncate">
-            <div className="text-xs font-medium text-zinc-200 truncate">{user?.name || 'Engineer'}</div>
-            <div className="text-[10px] font-mono text-zinc-500 truncate">{user?.email}</div>
-          </div>
-        </div>
-        <button
-          onClick={signOut}
-          title="Sign Out"
-          className="p-1.5 text-zinc-500 hover:text-zinc-300 rounded hover:bg-zinc-900 transition-colors"
+      <div className="px-4 py-3 border-t border-zinc-800/80 bg-zinc-950/80 flex flex-col gap-2">
+        <div
+          onClick={() => setIsAuthModalOpen(true)}
+          className="flex items-center justify-between p-1.5 -mx-1.5 rounded-lg hover:bg-zinc-900 cursor-pointer transition-colors"
+          title="Manage Firebase Auth & Personas"
         >
-          <LogOut className="w-4 h-4" />
+          <div className="flex items-center gap-2.5 overflow-hidden">
+            <div className="w-7 h-7 rounded-full bg-sky-950 border border-sky-800 flex items-center justify-center text-xs font-mono text-sky-300 font-semibold shrink-0">
+              {user?.name?.charAt(0) || 'U'}
+            </div>
+            <div className="truncate">
+              <div className="text-xs font-medium text-zinc-200 truncate flex items-center gap-1.5">
+                {user?.name || 'Engineer'}
+                {firebaseUser && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" title="Firebase Authenticated" />}
+              </div>
+              <div className="text-[10px] font-mono text-zinc-500 truncate">{user?.email}</div>
+            </div>
+          </div>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              signOut();
+            }}
+            title="Sign Out"
+            className="p-1 text-zinc-500 hover:text-zinc-300 rounded hover:bg-zinc-800 transition-colors"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
+        <button
+          onClick={() => setIsAuthModalOpen(true)}
+          className="w-full flex items-center justify-center gap-1.5 py-1 px-2 rounded bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-[11px] font-mono text-zinc-300 transition-colors"
+        >
+          <KeyRound className="w-3 h-3 text-sky-400" />
+          <span>{firebaseUser ? 'Account & Roles' : 'Sign In with Firebase'}</span>
         </button>
       </div>
+
+      <AuthModal isOpen={isAuthModalOpen} onClose={() => setIsAuthModalOpen(false)} />
     </aside>
   );
 };

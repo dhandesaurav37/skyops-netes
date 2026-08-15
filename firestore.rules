@@ -1,0 +1,15 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // User profile documents
+    match /users/{userId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && (request.auth.uid == userId || request.auth.token.firebase.sign_in_provider == 'anonymous');
+    }
+
+    // Default catch-all for authenticated application access
+    match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}
