@@ -154,8 +154,12 @@ export const ClustersView: React.FC<ClustersViewProps> = ({
 
                     <td className="px-5 py-3.5">
                       <div className="text-zinc-200 font-medium">
-                        {cluster.agentStatus === 'CONNECTED' ? (
+                        {cluster.agentStatus === 'CONNECTED' || cluster.connectionState === 'connected' ? (
                           <span className="text-emerald-400">Connected</span>
+                        ) : cluster.agentStatus === 'AGENT_DETECTED' || cluster.connectionState === 'agent_detected' ? (
+                          <span className="text-sky-400 font-semibold animate-pulse">Detected</span>
+                        ) : cluster.agentStatus === 'PENDING' || cluster.connectionState === 'pending' ? (
+                          <span className="text-amber-400">Pending</span>
                         ) : cluster.agentStatus === 'DEGRADED' ? (
                           <span className="text-amber-400">Degraded</span>
                         ) : (

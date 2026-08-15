@@ -115,10 +115,35 @@ class ApiClient {
     return data.clusters;
   }
 
-  async createCluster(name: string, description?: string): Promise<{ cluster: Cluster; token: string }> {
-    return this.request<{ cluster: Cluster; token: string }>('/api/v1/clusters', {
+  async createCluster(
+    name: string,
+    description?: string
+  ): Promise<{ cluster: Cluster; token: string; connectionCode?: string }> {
+    return this.request<{ cluster: Cluster; token: string; connectionCode?: string }>('/api/v1/clusters', {
       method: 'POST',
       body: JSON.stringify({ name, description })
+    });
+  }
+
+  async connectCluster(clusterId: string, connectionCode: string): Promise<{ success: boolean; cluster: Cluster }> {
+    return this.request<{ success: boolean; cluster: Cluster }>(`/api/v1/clusters/${clusterId}/connect`, {
+      method: 'POST',
+      body: JSON.stringify({ connectionCode })
+    });
+  }
+
+  async regenerateClusterToken(
+    clusterId: string
+  ): Promise<{ success: boolean; cluster: Cluster; token: string; connectionCode: string }> {
+    return this.request<{ success: boolean; cluster: Cluster; token: string; connectionCode: string }>(
+      `/api/v1/clusters/${clusterId}/regenerate-token`,
+      { method: 'POST' }
+    );
+  }
+
+  async disconnectCluster(clusterId: string): Promise<{ success: boolean; message: string }> {
+    return this.request<{ success: boolean; message: string }>(`/api/v1/clusters/${clusterId}/disconnect`, {
+      method: 'POST'
     });
   }
 

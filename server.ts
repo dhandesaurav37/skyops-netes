@@ -135,8 +135,8 @@ app.post('/api/v1/clusters', tenantAuth, (req: AuthenticatedRequest, res) => {
     return res.status(400).json({ error: 'Cluster name is required' });
   }
 
-  const { cluster, rawToken } = store.createCluster(req.orgId!, name.trim(), description);
-  res.status(201).json({ cluster, token: rawToken });
+  const { cluster, rawToken, connectionCode } = store.createCluster(req.orgId!, name.trim(), description);
+  res.status(201).json({ cluster, token: rawToken, connectionCode });
 });
 
 app.get('/api/v1/clusters/:id', tenantAuth, (req: AuthenticatedRequest, res) => {
@@ -145,6 +145,48 @@ app.get('/api/v1/clusters/:id', tenantAuth, (req: AuthenticatedRequest, res) => 
     return res.status(404).json({ error: 'Cluster not found' });
   }
   res.json({ cluster });
+});
+
+// Connect cluster using connection code handshake
+app.post('/api/v1/clusters/:id/connect', tenantAuth, (req: AuthenticatedRequest, res) => {
+  const { connectionCode } = req.body;
+  if (!connectionCode || typeof connectionCode !== 'string') {
+    return res.status(400).json({ error: 'Connection code is required' });
+  }
+
+  try {
+    const updated = store.verifyClusterConnection(req.params.id, req.orgId!, connectionCode);
+    res.json({ success: true, cluster: updated });
+  } catch (err: any) {
+    res.status(400).json({ error: err?.message || 'Failed to verify connection code' });
+  }
+});
+
+// Regenerate credentials for cluster
+app.post('/api/v1/clusters/:id/regenerate-token', tenantAuth, (req: AuthenticatedRequest, res) => {
+  if (req.userRole !== 'OWNER' && req.userRole !== 'ADMIN') {
+    return res.status(403).json({ error: 'Only OWNER and ADMIN roles can regenerate agent credentials' });
+  }
+
+  try {
+    const { cluster, rawToken, connectionCode } = store.regenerateClusterCredentials(req.params.id, req.orgId!);
+    res.json({ success: true, cluster, token: rawToken, connectionCode });
+  } catch (err: any) {
+    res.status(404).json({ error: err?.message || 'Cluster not found' });
+  }
+});
+
+// Disconnect agent from cluster
+app.post('/api/v1/clusters/:id/disconnect', tenantAuth, (req: AuthenticatedRequest, res) => {
+  if (req.userRole !== 'OWNER' && req.userRole !== 'ADMIN') {
+    return res.status(403).json({ error: 'Only OWNER and ADMIN roles can disconnect clusters' });
+  }
+
+  const success = store.disconnectCluster(req.params.id, req.orgId!);
+  if (!success) {
+    return res.status(404).json({ error: 'Cluster not found' });
+  }
+  res.json({ success: true, message: 'Cluster agent disconnected successfully' });
 });
 
 app.delete('/api/v1/clusters/:id', tenantAuth, (req: AuthenticatedRequest, res) => {
@@ -158,15 +200,16 @@ app.delete('/api/v1/clusters/:id', tenantAuth, (req: AuthenticatedRequest, res) 
   res.json({ success: true, message: 'Cluster and associated telemetry deleted' });
 });
 
+// Get manifests for cluster
 app.get('/api/v1/clusters/:id/manifests', tenantAuth, (req: AuthenticatedRequest, res) => {
-  const cluster = store.getCluster(req.params.id, req.orgId!);
+  const cluster = store.getCluster(req.params.id, req.orgId!, true);
   if (!cluster) {
     return res.status(404).json({ error: 'Cluster not found' });
   }
 
   const protocol = req.headers['x-forwarded-proto'] || req.protocol;
   const host = req.headers.host || `localhost:${PORT}`;
-  const serverUrl = `${protocol}://${host}`;
+  const serverUrl = process.env.SKYOPS_API_URL || process.env.APP_URL || `${protocol}://${host}`;
   const token = cluster.agentToken || 'sky_agent_configured_token';
 
   const manifest = generateKubernetesManifest({
@@ -183,21 +226,63 @@ app.get('/api/v1/clusters/:id/manifests', tenantAuth, (req: AuthenticatedRequest
     serverUrl
   });
 
+  const installCommand = `kubectl apply -f ${serverUrl}/api/v1/clusters/${cluster.id}/manifest.yaml`;
+  const manifestDownloadUrl = `${serverUrl}/api/v1/clusters/${cluster.id}/manifest.yaml`;
+
   res.json({
     clusterId: cluster.id,
     clusterName: cluster.name,
     token,
+    connectionCode: cluster.connectionCode,
     serverUrl,
     agentVersion: 'v1.4.2',
     namespace: 'skyops-system',
     kubectlManifest: manifest,
-    helmCommand
+    helmCommand,
+    installCommand,
+    manifestDownloadUrl
   });
+});
+
+// Direct raw YAML manifest stream for direct kubectl apply
+app.get('/api/v1/clusters/:id/manifest.yaml', (req, res) => {
+  // Find cluster across store
+  const cluster = store.getCluster(req.params.id, req.query.orgId as string || 'org-acme-primary', true);
+  if (!cluster) {
+    return res.status(404).type('text/plain').send('# Error: Cluster not found');
+  }
+
+  const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+  const host = req.headers.host || `localhost:${PORT}`;
+  const serverUrl = process.env.SKYOPS_API_URL || process.env.APP_URL || `${protocol}://${host}`;
+  const token = cluster.agentToken || 'sky_agent_configured_token';
+
+  const manifest = generateKubernetesManifest({
+    clusterId: cluster.id,
+    clusterName: cluster.name,
+    token,
+    serverUrl
+  });
+
+  res.setHeader('Content-Type', 'text/yaml; charset=utf-8');
+  res.setHeader('Content-Disposition', `inline; filename="skyops-agent-${cluster.id}.yaml"`);
+  res.send(manifest);
 });
 
 app.get('/api/v1/clusters/:id/resources', tenantAuth, (req: AuthenticatedRequest, res) => {
   const resources = store.getClusterResources(req.params.id, req.orgId!);
   res.json({ resources });
+});
+
+// --- Agent Ingestion Endpoints ---
+app.post('/api/v1/agent/register', agentAuth, (req: AgentRequest, res) => {
+  const { agentVersion, k8sVersion } = req.body;
+  try {
+    const result = store.registerAgent(req.clusterId!, agentVersion, k8sVersion);
+    res.json(result);
+  } catch (err: any) {
+    res.status(404).json({ error: err?.message || 'Cluster registration failed' });
+  }
 });
 
 // --- Agent Ingestion Endpoints ---

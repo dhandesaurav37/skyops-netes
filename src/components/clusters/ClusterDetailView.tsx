@@ -2,17 +2,24 @@ import {
   AlertTriangle,
   ArrowLeft,
   Boxes,
+  CheckCircle2,
   Clock,
+  KeyRound,
   Layers,
   ListTree,
+  Loader2,
   Radio,
   RefreshCw,
   Search,
   Server,
-  Terminal
+  ShieldAlert,
+  ShieldCheck,
+  Terminal,
+  Unplug
 } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 import { api } from '../../api/client';
+import { useAuth } from '../../context/AuthContext';
 import { AgentManifestsResponse, Cluster, KubernetesResource } from '../../types/index';
 import { ClusterStatusBadge, SeverityBadge, StatusBadge } from '../common/Badges';
 import { Button, CodeBlock, CopyButton, EmptyState, LoadingState, Modal } from '../common/UI';
@@ -26,6 +33,9 @@ interface ClusterDetailViewProps {
 type ResourceTab = 'pods' | 'nodes' | 'deployments' | 'statefulsets' | 'pvcs' | 'events' | 'agent';
 
 export const ClusterDetailView: React.FC<ClusterDetailViewProps> = ({ clusterId, onBack, onSelectIncident }) => {
+  const { role } = useAuth();
+  const canManage = role === 'OWNER' || role === 'ADMIN';
+
   const [cluster, setCluster] = useState<Cluster | null>(null);
   const [resources, setResources] = useState<KubernetesResource[]>([]);
   const [manifestData, setManifestData] = useState<AgentManifestsResponse | null>(null);
@@ -33,6 +43,15 @@ export const ClusterDetailView: React.FC<ClusterDetailViewProps> = ({ clusterId,
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(true);
   const [selectedResource, setSelectedResource] = useState<KubernetesResource | null>(null);
+
+  // Handshake & Credentials modal states
+  const [connectModalOpen, setConnectModalOpen] = useState(false);
+  const [inputConnectionCode, setInputConnectionCode] = useState('');
+  const [verifying, setVerifying] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+  const [regenerateLoading, setRegenerateLoading] = useState(false);
+  const [disconnectLoading, setDisconnectLoading] = useState(false);
 
   const fetchDetails = async () => {
     try {
@@ -45,6 +64,9 @@ export const ClusterDetailView: React.FC<ClusterDetailViewProps> = ({ clusterId,
       setCluster(clusterRes);
       setResources(resourcesRes);
       setManifestData(manifestsRes);
+      if (manifestsRes.connectionCode) {
+        setInputConnectionCode(manifestsRes.connectionCode);
+      }
     } catch (err) {
       console.error('Error fetching cluster details:', err);
     } finally {
@@ -55,6 +77,65 @@ export const ClusterDetailView: React.FC<ClusterDetailViewProps> = ({ clusterId,
   useEffect(() => {
     fetchDetails();
   }, [clusterId]);
+
+  const handleVerifyConnection = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inputConnectionCode.trim()) return;
+
+    try {
+      setVerifying(true);
+      setActionError(null);
+      const res = await api.connectCluster(clusterId, inputConnectionCode.trim());
+      setCluster(res.cluster);
+      setActionSuccess('Cluster connection verified successfully!');
+      setConnectModalOpen(false);
+      fetchDetails();
+    } catch (err: any) {
+      setActionError(err.message || 'Failed to verify connection code');
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  const handleRegenerateCredentials = async () => {
+    if (!confirm('Regenerating credentials will invalidate the existing agent token and require reinstalling or updating the agent secret. Continue?')) {
+      return;
+    }
+
+    try {
+      setRegenerateLoading(true);
+      setActionError(null);
+      const res = await api.regenerateClusterToken(clusterId);
+      setCluster(res.cluster);
+      if (res.connectionCode) {
+        setInputConnectionCode(res.connectionCode);
+      }
+      setActionSuccess('Agent credentials regenerated. Please update your cluster secret.');
+      fetchDetails();
+    } catch (err: any) {
+      setActionError(err.message || 'Failed to regenerate credentials');
+    } finally {
+      setRegenerateLoading(false);
+    }
+  };
+
+  const handleDisconnect = async () => {
+    if (!confirm(`Are you sure you want to disconnect agent from cluster ${cluster?.name}? Incident history will be preserved.`)) {
+      return;
+    }
+
+    try {
+      setDisconnectLoading(true);
+      setActionError(null);
+      await api.disconnectCluster(clusterId);
+      setActionSuccess('Cluster agent disconnected.');
+      fetchDetails();
+    } catch (err: any) {
+      setActionError(err.message || 'Failed to disconnect cluster');
+    } finally {
+      setDisconnectLoading(false);
+    }
+  };
 
   const formatTimeAgo = (ts?: number) => {
     if (!ts) return 'Never';
@@ -138,6 +219,64 @@ export const ClusterDetailView: React.FC<ClusterDetailViewProps> = ({ clusterId,
         </Button>
       </div>
 
+      {/* Action Alerts */}
+      {actionSuccess && (
+        <div className="p-3 text-xs rounded-lg bg-emerald-950/40 border border-emerald-800 text-emerald-300 font-mono flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+            <span>{actionSuccess}</span>
+          </div>
+          <button onClick={() => setActionSuccess(null)} className="text-zinc-400 hover:text-zinc-200">
+            &times;
+          </button>
+        </div>
+      )}
+
+      {actionError && (
+        <div className="p-3 text-xs rounded-lg bg-rose-950/40 border border-rose-800 text-rose-300 font-mono flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <ShieldAlert className="w-4 h-4 text-rose-400" />
+            <span>{actionError}</span>
+          </div>
+          <button onClick={() => setActionError(null)} className="text-zinc-400 hover:text-zinc-200">
+            &times;
+          </button>
+        </div>
+      )}
+
+      {/* Cluster Handshake Pending Banner */}
+      {cluster.connectionState !== 'connected' && cluster.agentStatus !== 'CONNECTED' && (
+        <div className="p-4 rounded-xl bg-amber-950/25 border border-amber-800/50 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3 text-xs font-mono">
+            <div className="p-2 rounded-lg bg-amber-900/40 text-amber-300 border border-amber-700/60">
+              <Radio className="w-4 h-4 animate-pulse" />
+            </div>
+            <div>
+              <div className="font-semibold text-amber-200">
+                {cluster.connectionState === 'agent_detected' || cluster.agentStatus === 'AGENT_DETECTED'
+                  ? 'Agent Detected — Awaiting Handshake Verification'
+                  : 'Pending Agent Installation & Handshake'}
+              </div>
+              <div className="text-amber-400/80 text-[11px] mt-0.5">
+                {cluster.connectionState === 'agent_detected' || cluster.agentStatus === 'AGENT_DETECTED'
+                  ? 'The cluster agent reached SkyOps. Verify your connection code to finalize the connection.'
+                  : 'Deploy the SkyOps Agent into your cluster to initiate telemetry ingestion.'}
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => setConnectModalOpen(true)}
+              icon={<ShieldCheck className="w-3.5 h-3.5" />}
+            >
+              Verify Connection Code
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Cluster Overview Stats Bar */}
       <div className="p-4 rounded-xl bg-zinc-900/60 border border-zinc-800/80 grid grid-cols-2 sm:grid-cols-5 gap-4 text-xs font-mono">
         <div>
@@ -213,12 +352,57 @@ export const ClusterDetailView: React.FC<ClusterDetailViewProps> = ({ clusterId,
 
       {/* Tab Content */}
       {activeTab === 'agent' ? (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold text-zinc-200 font-mono">Agent Installation Manifest & Helm Configuration</h3>
+        <div className="space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <h3 className="text-sm font-bold text-zinc-200 font-mono">Agent Installation & Cluster Handshake</h3>
+              <p className="text-xs text-zinc-400 mt-0.5">
+                Manage agent connection credentials, view deployment manifests, and monitor cluster connectivity.
+              </p>
+            </div>
+            {canManage && (
+              <div className="flex items-center gap-2">
+                {cluster.connectionState !== 'connected' && cluster.agentStatus !== 'CONNECTED' && (
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() => setConnectModalOpen(true)}
+                    icon={<ShieldCheck className="w-3.5 h-3.5" />}
+                  >
+                    Verify Handshake
+                  </Button>
+                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleRegenerateCredentials}
+                  disabled={regenerateLoading}
+                  icon={regenerateLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                >
+                  Regenerate Token
+                </Button>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  onClick={handleDisconnect}
+                  disabled={disconnectLoading}
+                  icon={disconnectLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Unplug className="w-3.5 h-3.5" />}
+                >
+                  Disconnect
+                </Button>
+              </div>
+            )}
           </div>
+
           {manifestData && (
             <div className="space-y-4">
+              {manifestData.installCommand && (
+                <CodeBlock
+                  code={manifestData.installCommand}
+                  language="bash"
+                  title="Quick Install Command"
+                />
+              )}
               <CodeBlock code={manifestData.kubectlManifest} language="yaml" title="kubectl apply manifest" />
               <CodeBlock code={manifestData.helmCommand} language="bash" title="Helm Upgrade / Install" />
             </div>
@@ -467,6 +651,55 @@ export const ClusterDetailView: React.FC<ClusterDetailViewProps> = ({ clusterId,
               </div>
             )}
           </div>
+        </Modal>
+      )}
+
+      {/* Verify Connection Handshake Modal */}
+      {connectModalOpen && (
+        <Modal
+          isOpen={connectModalOpen}
+          onClose={() => setConnectModalOpen(false)}
+          title={`Verify Handshake — ${cluster.name}`}
+          maxWidth="md"
+        >
+          <form onSubmit={handleVerifyConnection} className="space-y-4">
+            <p className="text-xs text-zinc-400">
+              Enter the single-use connection registration code generated when this cluster was registered or from the agent installation output to finalize the connection.
+            </p>
+
+            <div>
+              <label className="block text-xs font-mono font-medium text-zinc-300 mb-1">
+                Connection Registration Code
+              </label>
+              <input
+                type="text"
+                required
+                placeholder="SKYOPS-CONNECT-XXXX-XXXX"
+                value={inputConnectionCode}
+                onChange={(e) => setInputConnectionCode(e.target.value.toUpperCase())}
+                className="w-full px-3 py-2 text-sm bg-zinc-950 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-sky-500 font-mono tracking-wider"
+              />
+            </div>
+
+            <div className="text-[11px] font-mono text-zinc-500 flex items-center gap-1.5">
+              <KeyRound className="w-3 h-3 text-zinc-400" />
+              <span>Valid for 30 minutes after cluster creation or credential regeneration.</span>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-zinc-800">
+              <Button variant="ghost" type="button" onClick={() => setConnectModalOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                type="submit"
+                disabled={verifying || !inputConnectionCode.trim()}
+                icon={verifying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}
+              >
+                {verifying ? 'Verifying...' : 'Verify & Connect'}
+              </Button>
+            </div>
+          </form>
         </Modal>
       )}
     </div>

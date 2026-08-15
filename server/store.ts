@@ -87,6 +87,11 @@ class DataStore {
     setInterval(() => {
       const now = Date.now();
       for (const cluster of this.clusters.values()) {
+        // If the cluster is in initial pending or awaiting confirmation, do not mark it offline
+        if (cluster.connectionState === 'pending' || cluster.connectionState === 'agent_detected') {
+          continue;
+        }
+
         if (!cluster.lastHeartbeat) {
           cluster.agentStatus = 'OFFLINE';
           cluster.status = 'AGENT_OFFLINE';
@@ -95,13 +100,16 @@ class DataStore {
 
         const elapsedSeconds = (now - cluster.lastHeartbeat) / 1000;
         if (elapsedSeconds > 180) {
+          // Grace period: mark offline after 3 minutes without heartbeat
           cluster.agentStatus = 'OFFLINE';
           cluster.status = 'AGENT_OFFLINE';
+          cluster.connectionState = 'offline';
         } else if (elapsedSeconds > 90) {
           cluster.agentStatus = 'DEGRADED';
           if (cluster.status === 'HEALTHY') cluster.status = 'WARNING';
         } else {
           cluster.agentStatus = 'CONNECTED';
+          cluster.connectionState = 'connected';
           // Re-evaluate health based on incidents
           const openIncidents = Array.from(this.incidents.values()).filter(
             (i) => i.clusterId === cluster.id && (i.status === 'OPEN' || i.status === 'IN_PROGRESS' || i.status === 'ACKNOWLEDGED')
@@ -190,27 +198,47 @@ class DataStore {
 
   // --- Cluster Management ---
   public getClusters(orgId: string): Cluster[] {
-    return Array.from(this.clusters.values()).filter((c) => c.orgId === orgId);
+    return Array.from(this.clusters.values())
+      .filter((c) => c.orgId === orgId)
+      .map((c) => {
+        // Do not expose raw agentToken in generic cluster list
+        const { agentToken, ...sanitized } = c;
+        return sanitized as Cluster;
+      });
   }
 
-  public getCluster(clusterId: string, orgId: string): Cluster | null {
+  public getCluster(clusterId: string, orgId: string, includeToken = false): Cluster | null {
     const cluster = this.clusters.get(clusterId);
     if (!cluster || cluster.orgId !== orgId) return null;
-    return cluster;
+    if (includeToken) return cluster;
+    const { agentToken, ...sanitized } = cluster;
+    return sanitized as Cluster;
   }
 
-  public createCluster(orgId: string, name: string, description?: string): { cluster: Cluster; rawToken: string } {
+  public createCluster(
+    orgId: string,
+    name: string,
+    description?: string
+  ): { cluster: Cluster; rawToken: string; connectionCode: string } {
     const clusterId = `cls-${crypto.randomBytes(6).toString('hex')}`;
     const rawToken = `sky_agent_${crypto.randomBytes(24).toString('hex')}`;
     const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+
+    // Generate secure, short-lived single-use connection code e.g. SKYOPS-CONNECT-XXXX-XXXX
+    const codeSuffix = crypto.randomBytes(4).toString('hex').toUpperCase();
+    const connectionCode = `SKYOPS-CONNECT-${codeSuffix.slice(0, 4)}-${codeSuffix.slice(4)}`;
+    const connectionCodeExpiresAt = Date.now() + 30 * 60 * 1000; // 30 minutes validity
 
     const cluster: Cluster = {
       id: clusterId,
       orgId,
       name,
       description: description || '',
-      status: 'AGENT_OFFLINE',
-      agentStatus: 'OFFLINE',
+      status: 'pending',
+      agentStatus: 'PENDING',
+      connectionState: 'pending',
+      connectionCode,
+      connectionCodeExpiresAt,
       nodeCount: 0,
       podCount: 0,
       openIncidentCount: 0,
@@ -222,12 +250,110 @@ class DataStore {
     this.clusterTokens.set(tokenHash, { clusterId, orgId });
     this.resources.set(clusterId, []);
 
-    return { cluster, rawToken };
+    return { cluster, rawToken, connectionCode };
+  }
+
+  public verifyClusterConnection(clusterId: string, orgId: string, providedCode: string): Cluster {
+    const cluster = this.clusters.get(clusterId);
+    if (!cluster || cluster.orgId !== orgId) {
+      throw new Error('Cluster not found');
+    }
+
+    if (cluster.connectionState === 'connected' && cluster.agentStatus === 'CONNECTED') {
+      return cluster;
+    }
+
+    if (!cluster.connectionCode) {
+      throw new Error('No active connection code found for this cluster. Please regenerate agent credentials.');
+    }
+
+    if (cluster.connectionCodeExpiresAt && Date.now() > cluster.connectionCodeExpiresAt) {
+      throw new Error('The connection code has expired. Please regenerate agent credentials.');
+    }
+
+    const cleanProvided = providedCode.trim().toUpperCase().replace(/\s+/g, '');
+    const cleanStored = cluster.connectionCode.trim().toUpperCase().replace(/\s+/g, '');
+
+    if (cleanProvided !== cleanStored) {
+      throw new Error('Invalid connection code. Please enter the exact registration code generated for this cluster.');
+    }
+
+    // Success: Activate connection and invalidate the single-use connection code
+    cluster.status = 'HEALTHY';
+    cluster.agentStatus = 'CONNECTED';
+    cluster.connectionState = 'connected';
+    cluster.connectedAt = Date.now();
+    cluster.connectionCode = undefined;
+    cluster.connectionCodeExpiresAt = undefined;
+
+    return cluster;
+  }
+
+  public regenerateClusterCredentials(
+    clusterId: string,
+    orgId: string
+  ): { cluster: Cluster; rawToken: string; connectionCode: string } {
+    const cluster = this.clusters.get(clusterId);
+    if (!cluster || cluster.orgId !== orgId) {
+      throw new Error('Cluster not found');
+    }
+
+    // Invalidate existing tokens for this cluster
+    for (const [hash, info] of this.clusterTokens.entries()) {
+      if (info.clusterId === clusterId) {
+        this.clusterTokens.delete(hash);
+      }
+    }
+
+    // Generate new credentials
+    const rawToken = `sky_agent_${crypto.randomBytes(24).toString('hex')}`;
+    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+
+    const codeSuffix = crypto.randomBytes(4).toString('hex').toUpperCase();
+    const connectionCode = `SKYOPS-CONNECT-${codeSuffix.slice(0, 4)}-${codeSuffix.slice(4)}`;
+    const connectionCodeExpiresAt = Date.now() + 30 * 60 * 1000;
+
+    cluster.agentToken = rawToken;
+    cluster.connectionCode = connectionCode;
+    cluster.connectionCodeExpiresAt = connectionCodeExpiresAt;
+    cluster.status = 'pending';
+    cluster.agentStatus = 'PENDING';
+    cluster.connectionState = 'pending';
+    cluster.agentDetectedAt = undefined;
+
+    this.clusterTokens.set(tokenHash, { clusterId, orgId });
+
+    return { cluster, rawToken, connectionCode };
+  }
+
+  public disconnectCluster(clusterId: string, orgId: string): boolean {
+    const cluster = this.clusters.get(clusterId);
+    if (!cluster || cluster.orgId !== orgId) return false;
+
+    // Revoke token hash to reject future agent requests
+    for (const [hash, info] of this.clusterTokens.entries()) {
+      if (info.clusterId === clusterId) {
+        this.clusterTokens.delete(hash);
+      }
+    }
+
+    cluster.agentToken = undefined;
+    cluster.status = 'AGENT_OFFLINE';
+    cluster.agentStatus = 'OFFLINE';
+    cluster.connectionState = 'offline';
+    return true;
   }
 
   public deleteCluster(clusterId: string, orgId: string): boolean {
-    const cluster = this.getCluster(clusterId, orgId);
-    if (!cluster) return false;
+    const cluster = this.clusters.get(clusterId);
+    if (!cluster || cluster.orgId !== orgId) return false;
+
+    // Delete token hash
+    for (const [hash, info] of this.clusterTokens.entries()) {
+      if (info.clusterId === clusterId) {
+        this.clusterTokens.delete(hash);
+      }
+    }
 
     this.clusters.delete(clusterId);
     this.resources.delete(clusterId);
@@ -251,6 +377,35 @@ class DataStore {
     return entry || null;
   }
 
+  public registerAgent(
+    clusterId: string,
+    agentVersion?: string,
+    k8sVersion?: string
+  ): { status: string; clusterId: string; connectionCode?: string; serverTime: number } {
+    const cluster = this.clusters.get(clusterId);
+    if (!cluster) {
+      throw new Error('Cluster not found');
+    }
+
+    cluster.lastSeenAt = Date.now();
+    cluster.agentDetectedAt = Date.now();
+    if (agentVersion) cluster.agentVersion = agentVersion;
+    if (k8sVersion) cluster.k8sVersion = k8sVersion;
+
+    if (cluster.connectionState === 'pending') {
+      cluster.connectionState = 'agent_detected';
+      cluster.status = 'agent_detected';
+      cluster.agentStatus = 'AGENT_DETECTED';
+    }
+
+    return {
+      status: 'REGISTERED',
+      clusterId,
+      connectionCode: cluster.connectionCode,
+      serverTime: Date.now()
+    };
+  }
+
   public recordAgentHeartbeat(
     clusterId: string,
     agentVersion: string,
@@ -262,24 +417,35 @@ class DataStore {
     if (!cluster) return false;
 
     cluster.lastHeartbeat = Date.now();
-    cluster.agentStatus = 'CONNECTED';
+    cluster.lastSeenAt = Date.now();
     if (agentVersion) cluster.agentVersion = agentVersion;
     if (k8sVersion) cluster.k8sVersion = k8sVersion;
     if (typeof nodeCount === 'number') cluster.nodeCount = nodeCount;
     if (typeof podCount === 'number') cluster.podCount = podCount;
 
-    // Refresh cluster health status
-    const openIncidents = Array.from(this.incidents.values()).filter(
-      (i) => i.clusterId === clusterId && (i.status === 'OPEN' || i.status === 'IN_PROGRESS' || i.status === 'ACKNOWLEDGED')
-    );
-    const hasCritical = openIncidents.some((i) => i.severity === 'CRITICAL');
-    const hasWarning = openIncidents.some((i) => i.severity === 'HIGH' || i.severity === 'MEDIUM');
+    if (cluster.connectionState === 'pending') {
+      cluster.agentDetectedAt = Date.now();
+      cluster.connectionState = 'agent_detected';
+      cluster.status = 'agent_detected';
+      cluster.agentStatus = 'AGENT_DETECTED';
+    } else if (cluster.connectionState === 'connected' || cluster.status === 'HEALTHY' || cluster.status === 'WARNING' || cluster.status === 'CRITICAL') {
+      cluster.agentStatus = 'CONNECTED';
+      cluster.connectionState = 'connected';
 
-    if (hasCritical) cluster.status = 'CRITICAL';
-    else if (hasWarning) cluster.status = 'WARNING';
-    else cluster.status = 'HEALTHY';
+      // Refresh cluster health status
+      const openIncidents = Array.from(this.incidents.values()).filter(
+        (i) => i.clusterId === clusterId && (i.status === 'OPEN' || i.status === 'IN_PROGRESS' || i.status === 'ACKNOWLEDGED')
+      );
+      const hasCritical = openIncidents.some((i) => i.severity === 'CRITICAL');
+      const hasWarning = openIncidents.some((i) => i.severity === 'HIGH' || i.severity === 'MEDIUM');
 
-    cluster.openIncidentCount = openIncidents.length;
+      if (hasCritical) cluster.status = 'CRITICAL';
+      else if (hasWarning) cluster.status = 'WARNING';
+      else cluster.status = 'HEALTHY';
+
+      cluster.openIncidentCount = openIncidents.length;
+    }
+
     return true;
   }
 

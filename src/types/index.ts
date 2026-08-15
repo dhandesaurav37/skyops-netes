@@ -23,8 +23,22 @@ export interface OrgMember {
   joinedAt: number;
 }
 
-export type ClusterStatus = 'HEALTHY' | 'WARNING' | 'CRITICAL' | 'AGENT_OFFLINE' | 'UNKNOWN';
-export type AgentStatus = 'CONNECTED' | 'DEGRADED' | 'OFFLINE';
+export type ClusterStatus =
+  | 'pending'
+  | 'installing'
+  | 'agent_detected'
+  | 'waiting_for_confirmation'
+  | 'connected'
+  | 'offline'
+  | 'error'
+  | 'HEALTHY'
+  | 'WARNING'
+  | 'CRITICAL'
+  | 'AGENT_OFFLINE'
+  | 'UNKNOWN';
+
+export type AgentStatus = 'PENDING' | 'AGENT_DETECTED' | 'WAITING_CONFIRMATION' | 'CONNECTED' | 'DEGRADED' | 'OFFLINE' | 'ERROR';
+export type ConnectionState = 'pending' | 'installing' | 'agent_detected' | 'waiting_for_confirmation' | 'connected' | 'offline' | 'error';
 
 export interface Cluster {
   id: string;
@@ -33,13 +47,19 @@ export interface Cluster {
   description?: string;
   status: ClusterStatus;
   agentStatus: AgentStatus;
+  connectionState?: ConnectionState;
+  connectionCode?: string;
+  connectionCodeExpiresAt?: number;
+  agentDetectedAt?: number;
   agentVersion?: string;
   k8sVersion?: string;
   nodeCount: number;
   podCount: number;
   openIncidentCount: number;
   lastHeartbeat?: number;
+  lastSeenAt?: number;
   createdAt: number;
+  connectedAt?: number;
   agentToken?: string;
   isSimulated?: boolean;
 }
@@ -225,9 +245,12 @@ export interface AgentManifestsResponse {
   clusterId: string;
   clusterName: string;
   token: string;
+  connectionCode?: string;
   serverUrl: string;
   agentVersion: string;
   namespace: string;
   kubectlManifest: string;
   helmCommand: string;
+  installCommand?: string;
+  manifestDownloadUrl?: string;
 }

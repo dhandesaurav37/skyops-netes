@@ -99,23 +99,45 @@ export const ClusterStatusBadge: React.FC<{ status: ClusterStatus; agentStatus?:
   status,
   agentStatus
 }) => {
-  let label = status;
+  let label: string = status;
   let bg = 'bg-slate-900 text-slate-300 border-slate-700';
   let dot = 'bg-slate-500';
 
-  if (agentStatus === 'OFFLINE' || status === 'AGENT_OFFLINE') {
-    label = 'AGENT_OFFLINE';
-    bg = 'bg-zinc-950 text-zinc-400 border-zinc-700';
-    dot = 'bg-zinc-600';
-  } else if (status === 'CRITICAL') {
-    bg = 'bg-rose-950/40 text-rose-300 border-rose-700/60';
-    dot = 'bg-rose-500 animate-pulse';
-  } else if (status === 'WARNING') {
-    bg = 'bg-amber-950/40 text-amber-300 border-amber-700/60';
-    dot = 'bg-amber-500';
-  } else if (status === 'HEALTHY') {
+  const normalized = (status || '').toLowerCase();
+  const normalizedAgent = (agentStatus || '').toLowerCase();
+
+  if (normalized === 'pending' || normalizedAgent === 'pending') {
+    label = 'PENDING AGENT';
+    bg = 'bg-amber-950/40 text-amber-300 border-amber-800/60';
+    dot = 'bg-amber-400 animate-pulse';
+  } else if (normalized === 'agent_detected' || normalizedAgent === 'agent_detected') {
+    label = 'AGENT DETECTED';
+    bg = 'bg-sky-950/40 text-sky-300 border-sky-800/60';
+    dot = 'bg-sky-400 animate-pulse';
+  } else if (normalized === 'waiting_for_confirmation' || normalizedAgent === 'waiting_confirmation') {
+    label = 'WAITING CONFIRMATION';
+    bg = 'bg-purple-950/40 text-purple-300 border-purple-800/60';
+    dot = 'bg-purple-400 animate-pulse';
+  } else if (normalized === 'connected' || normalized === 'healthy' || status === 'HEALTHY') {
+    label = 'CONNECTED';
     bg = 'bg-emerald-950/40 text-emerald-300 border-emerald-700/60';
     dot = 'bg-emerald-500';
+  } else if (normalized === 'warning' || status === 'WARNING' || agentStatus === 'DEGRADED') {
+    label = agentStatus === 'DEGRADED' ? 'DEGRADED' : 'WARNING';
+    bg = 'bg-amber-950/40 text-amber-300 border-amber-700/60';
+    dot = 'bg-amber-500';
+  } else if (normalized === 'critical' || status === 'CRITICAL') {
+    label = 'CRITICAL';
+    bg = 'bg-rose-950/40 text-rose-300 border-rose-700/60';
+    dot = 'bg-rose-500 animate-pulse';
+  } else if (normalized === 'offline' || normalized === 'agent_offline' || agentStatus === 'OFFLINE' || status === 'AGENT_OFFLINE') {
+    label = 'AGENT OFFLINE';
+    bg = 'bg-zinc-950 text-zinc-400 border-zinc-700';
+    dot = 'bg-zinc-600';
+  } else if (normalized === 'error' || agentStatus === 'ERROR') {
+    label = 'CONNECTION ERROR';
+    bg = 'bg-rose-950/40 text-rose-300 border-rose-800/60';
+    dot = 'bg-rose-500';
   }
 
   return (
@@ -123,7 +145,7 @@ export const ClusterStatusBadge: React.FC<{ status: ClusterStatus; agentStatus?:
       className={`inline-flex items-center gap-1.5 font-mono text-xs font-medium px-2.5 py-1 rounded border ${bg}`}
     >
       <span className={`w-1.5 h-1.5 rounded-full ${dot}`} />
-      {label.replace('_', ' ')}
+      {label}
     </span>
   );
 };
