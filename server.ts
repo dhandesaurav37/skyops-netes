@@ -259,7 +259,7 @@ app.get('/api/v1/clusters/:id/manifests', tenantAuth, (req: AuthenticatedRequest
     connectionCode: cluster.connectionCode,
     installKey: cluster.installKey,
     serverUrl,
-    agentVersion: 'v1.4.2',
+    agentVersion: 'sha-fb3a472',
     namespace: 'skyops-system',
     kubectlManifest: manifest,
     helmCommand,

@@ -9,7 +9,7 @@ export interface ManifestConfig {
 
 export function generateKubernetesManifest(config: ManifestConfig): string {
   const namespace = config.namespace || 'skyops-system';
-  const agentVersion = config.agentVersion || 'v1.4.2';
+  const agentVersion = config.agentVersion || 'sha-fb3a472';
   const encodedToken = Buffer.from(config.token).toString('base64');
   const encodedServer = Buffer.from(config.serverUrl).toString('base64');
   const encodedClusterId = Buffer.from(config.clusterId).toString('base64');

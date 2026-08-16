@@ -404,22 +404,27 @@ class DataStore {
       throw new Error('Cluster not found');
     }
 
-    cluster.lastSeenAt = Date.now();
-    cluster.agentDetectedAt = Date.now();
+    const now = Date.now();
+    cluster.lastSeenAt = now;
+    cluster.lastHeartbeat = now;
+    cluster.lastHeartbeatAt = now;
+    cluster.agentDetectedAt = cluster.agentDetectedAt || now;
+    cluster.connectedAt = cluster.connectedAt || now;
     if (agentVersion) cluster.agentVersion = agentVersion;
     if (k8sVersion) cluster.k8sVersion = k8sVersion;
 
-    if (cluster.connectionState === 'pending') {
-      cluster.connectionState = 'agent_detected';
-      cluster.status = 'agent_detected';
-      cluster.agentStatus = 'AGENT_DETECTED';
+    cluster.agentStatus = 'CONNECTED';
+    cluster.connectionState = 'connected';
+    cluster.connectionStatus = 'connected';
+    if (cluster.status === 'pending' || cluster.status === 'installing' || cluster.status === 'agent_detected') {
+      cluster.status = 'HEALTHY';
     }
 
     return {
       status: 'REGISTERED',
       clusterId,
       connectionCode: cluster.connectionCode,
-      serverTime: Date.now()
+      serverTime: now
     };
   }
 
@@ -433,35 +438,32 @@ class DataStore {
     const cluster = this.clusters.get(clusterId);
     if (!cluster) return false;
 
-    cluster.lastHeartbeat = Date.now();
-    cluster.lastSeenAt = Date.now();
+    const now = Date.now();
+    cluster.lastHeartbeat = now;
+    cluster.lastHeartbeatAt = now;
+    cluster.lastSeenAt = now;
+    cluster.connectedAt = cluster.connectedAt || now;
     if (agentVersion) cluster.agentVersion = agentVersion;
     if (k8sVersion) cluster.k8sVersion = k8sVersion;
     if (typeof nodeCount === 'number') cluster.nodeCount = nodeCount;
     if (typeof podCount === 'number') cluster.podCount = podCount;
 
-    if (cluster.connectionState === 'pending') {
-      cluster.agentDetectedAt = Date.now();
-      cluster.connectionState = 'agent_detected';
-      cluster.status = 'agent_detected';
-      cluster.agentStatus = 'AGENT_DETECTED';
-    } else if (cluster.connectionState === 'connected' || cluster.status === 'HEALTHY' || cluster.status === 'WARNING' || cluster.status === 'CRITICAL') {
-      cluster.agentStatus = 'CONNECTED';
-      cluster.connectionState = 'connected';
+    cluster.agentStatus = 'CONNECTED';
+    cluster.connectionState = 'connected';
+    cluster.connectionStatus = 'connected';
 
-      // Refresh cluster health status
-      const openIncidents = Array.from(this.incidents.values()).filter(
-        (i) => i.clusterId === clusterId && (i.status === 'OPEN' || i.status === 'IN_PROGRESS' || i.status === 'ACKNOWLEDGED')
-      );
-      const hasCritical = openIncidents.some((i) => i.severity === 'CRITICAL');
-      const hasWarning = openIncidents.some((i) => i.severity === 'HIGH' || i.severity === 'MEDIUM');
+    // Refresh cluster health status based on open incidents
+    const openIncidents = Array.from(this.incidents.values()).filter(
+      (i) => i.clusterId === clusterId && (i.status === 'OPEN' || i.status === 'IN_PROGRESS' || i.status === 'ACKNOWLEDGED')
+    );
+    const hasCritical = openIncidents.some((i) => i.severity === 'CRITICAL');
+    const hasWarning = openIncidents.some((i) => i.severity === 'HIGH' || i.severity === 'MEDIUM');
 
-      if (hasCritical) cluster.status = 'CRITICAL';
-      else if (hasWarning) cluster.status = 'WARNING';
-      else cluster.status = 'HEALTHY';
+    if (hasCritical) cluster.status = 'CRITICAL';
+    else if (hasWarning) cluster.status = 'WARNING';
+    else cluster.status = 'HEALTHY';
 
-      cluster.openIncidentCount = openIncidents.length;
-    }
+    cluster.openIncidentCount = openIncidents.length;
 
     return true;
   }

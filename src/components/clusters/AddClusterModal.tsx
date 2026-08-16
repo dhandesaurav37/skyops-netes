@@ -187,7 +187,7 @@ export const AddClusterModal: React.FC<AddClusterModalProps> = ({ isOpen, onClos
             </div>
             <div>
               <span className="text-zinc-500 block">Agent Image</span>
-              <span className="text-sky-400 block truncate">skyops-agent:{manifestData?.agentVersion || 'v1.4.2'}</span>
+              <span className="text-sky-400 block truncate">skyops-agent:{manifestData?.agentVersion || 'sha-fb3a472'}</span>
             </div>
             <div>
               <span className="text-zinc-500 block">Ingress Server</span>

@@ -39,6 +39,7 @@ export type ClusterStatus =
 
 export type AgentStatus = 'PENDING' | 'AGENT_DETECTED' | 'WAITING_CONFIRMATION' | 'CONNECTED' | 'DEGRADED' | 'OFFLINE' | 'ERROR';
 export type ConnectionState = 'pending' | 'installing' | 'agent_detected' | 'waiting_for_confirmation' | 'connected' | 'offline' | 'error';
+export type ConnectionStatus = 'pending' | 'connecting' | 'connected' | 'disconnected' | 'error';
 
 export interface Cluster {
   id: string;
@@ -48,6 +49,7 @@ export interface Cluster {
   status: ClusterStatus;
   agentStatus: AgentStatus;
   connectionState?: ConnectionState;
+  connectionStatus?: ConnectionStatus;
   connectionCode?: string;
   connectionCodeExpiresAt?: number;
   agentDetectedAt?: number;
@@ -57,6 +59,7 @@ export interface Cluster {
   podCount: number;
   openIncidentCount: number;
   lastHeartbeat?: number;
+  lastHeartbeatAt?: number;
   lastSeenAt?: number;
   createdAt: number;
   connectedAt?: number;
