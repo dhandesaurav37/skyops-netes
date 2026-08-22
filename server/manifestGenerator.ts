@@ -9,7 +9,7 @@ export interface ManifestConfig {
 
 export function generateKubernetesManifest(config: ManifestConfig): string {
   const namespace = config.namespace || 'skyops-system';
-  const agentVersion = config.agentVersion || 'sha-fb3a472';
+  const agentVersion = config.agentVersion || 'v1.4.2';
   const encodedToken = Buffer.from(config.token).toString('base64');
   const encodedServer = Buffer.from(config.serverUrl).toString('base64');
   const encodedClusterId = Buffer.from(config.clusterId).toString('base64');
@@ -176,4 +176,38 @@ helm upgrade --install skyops-agent skyops/skyops-agent \\
   --set clusterId="${config.clusterId}" \\
   --set agentToken="${config.token}" \\
   --set serverUrl="${config.serverUrl}"`;
+}
+
+export function generateKubectlCommand(serverUrl: string, clusterId: string, installKey?: string): string {
+  const manifestUrl = installKey
+    ? `${serverUrl}/api/v1/clusters/${clusterId}/manifests/download?key=${installKey}`
+    : `${serverUrl}/api/v1/clusters/${clusterId}/manifests/download`;
+  return `kubectl apply -f "${manifestUrl}"`;
+}
+
+export function generateHelmValues(config: ManifestConfig): string {
+  return `replicaCount: 1
+image:
+  repository: ghcr.io/dhandesaurav37/skyops-agent
+  pullPolicy: IfNotPresent
+  tag: "${config.agentVersion || 'v1.4.2'}"
+
+clusterId: "${config.clusterId}"
+agentToken: "${config.token}"
+serverUrl: "${config.serverUrl}"
+
+resources:
+  limits:
+    cpu: 250m
+    memory: 256Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi
+
+securityContext:
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  runAsNonRoot: true
+  runAsUser: 65532
+`;
 }

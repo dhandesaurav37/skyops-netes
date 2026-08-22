@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  ArrowLeft,
   ArrowRight,
   Check,
   CheckCircle2,
@@ -13,7 +14,8 @@ import {
   Server,
   ShieldCheck,
   Terminal,
-  X
+  X,
+  Zap
 } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 import { api } from '../../api/client';
@@ -26,23 +28,28 @@ interface AddClusterModalProps {
   onClusterCreated: (cluster: Cluster) => void;
 }
 
+type WizardStep = 1 | 2 | 3 | 4;
+
 export const AddClusterModal: React.FC<AddClusterModalProps> = ({ isOpen, onClose, onClusterCreated }) => {
-  const [step, setStep] = useState<'create' | 'connect'>('create');
+  const [currentStep, setCurrentStep] = useState<WizardStep>(1);
   const [clusterName, setClusterName] = useState('');
   const [description, setDescription] = useState('');
+  const [environmentType, setEnvironmentType] = useState<'production' | 'staging' | 'development'>('production');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdCluster, setCreatedCluster] = useState<Cluster | null>(null);
   const [manifestData, setManifestData] = useState<AgentManifestsResponse | null>(null);
-  const [installMethod, setInstallMethod] = useState<'command' | 'yaml' | 'helm'>('command');
+  const [installMethod, setInstallMethod] = useState<'helm' | 'kubectl'>('helm');
 
-  // Connection handshake states
-  const [connectionCode, setConnectionCode] = useState('');
+  // Step 3 Pairing Key states
+  const [inputConnectionCode, setInputConnectionCode] = useState('');
   const [verifying, setVerifying] = useState(false);
   const [verifySuccess, setVerifySuccess] = useState(false);
-  const [agentStatus, setAgentStatus] = useState<'pending' | 'agent_detected' | 'connected'>('pending');
+  const [agentPulseDetected, setAgentPulseDetected] = useState(false);
+  const [timeRemainingSeconds, setTimeRemainingSeconds] = useState(900); // 15 minutes
 
-  const handleCreate = async (e: React.FormEvent) => {
+  // Step 1: Create pending cluster record
+  const handleCreateCluster = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!clusterName.trim()) return;
 
@@ -51,328 +58,430 @@ export const AddClusterModal: React.FC<AddClusterModalProps> = ({ isOpen, onClos
       setError(null);
       const res = await api.createCluster(clusterName.trim(), description.trim());
       setCreatedCluster(res.cluster);
-      if (res.connectionCode) {
-        setConnectionCode(res.connectionCode);
-      }
       onClusterCreated(res.cluster);
 
-      // Fetch manifests
+      // Fetch manifests & connection keys
       const manifests = await api.getClusterManifests(res.cluster.id);
       setManifestData(manifests);
       if (manifests.connectionCode) {
-        setConnectionCode(manifests.connectionCode);
+        setInputConnectionCode(manifests.connectionCode);
       }
-      setStep('connect');
+
+      setCurrentStep(2);
     } catch (err: any) {
-      setError(err.message || 'Failed to create cluster');
+      setError(err.message || 'Failed to initialize cluster registration');
     } finally {
       setLoading(false);
     }
   };
 
-  // Poll cluster state while modal is on the connection step to detect agent handshake
+  // 15-minute countdown for connection key validity
   useEffect(() => {
-    if (!isOpen || step !== 'connect' || !createdCluster?.id || verifySuccess) return;
+    if (!isOpen || currentStep !== 3 || verifySuccess) return;
 
-    const interval = setInterval(async () => {
+    const timer = setInterval(() => {
+      setTimeRemainingSeconds((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [isOpen, currentStep, verifySuccess]);
+
+  // Background poller on Step 3 to auto-detect agent registration
+  useEffect(() => {
+    if (!isOpen || currentStep !== 3 || !createdCluster?.id || verifySuccess) return;
+
+    const poller = setInterval(async () => {
       try {
         const cluster = await api.getCluster(createdCluster.id);
         if (cluster.agentStatus === 'CONNECTED' || cluster.connectionState === 'connected') {
-          setAgentStatus('connected');
           setVerifySuccess(true);
-        } else if (cluster.agentStatus === 'AGENT_DETECTED' || cluster.connectionState === 'agent_detected') {
-          setAgentStatus('agent_detected');
+          setAgentPulseDetected(true);
+          setCreatedCluster(cluster);
+          onClusterCreated(cluster);
+          setTimeout(() => {
+            setCurrentStep(4);
+          }, 800);
+        } else if (cluster.agentDetectedAt) {
+          setAgentPulseDetected(true);
         }
       } catch {
-        // ignore polling errors
+        // non-fatal polling error
       }
     }, 3000);
 
-    return () => clearInterval(interval);
-  }, [isOpen, step, createdCluster?.id, verifySuccess]);
+    return () => clearInterval(poller);
+  }, [isOpen, currentStep, createdCluster?.id, verifySuccess]);
 
-  const handleVerifyConnect = async (e?: React.FormEvent) => {
+  // Manual Connection Key verification
+  const handleVerifyPairingKey = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!createdCluster?.id || !connectionCode.trim()) return;
+    if (!createdCluster?.id || !inputConnectionCode.trim()) return;
 
     try {
       setVerifying(true);
       setError(null);
-      const res = await api.connectCluster(createdCluster.id, connectionCode.trim());
+      const res = await api.connectCluster(createdCluster.id, inputConnectionCode.trim());
       setVerifySuccess(true);
-      setAgentStatus('connected');
+      setAgentPulseDetected(true);
       setCreatedCluster(res.cluster);
       onClusterCreated(res.cluster);
+      setCurrentStep(4);
     } catch (err: any) {
-      setError(err.message || 'Failed to verify connection code');
+      setError(err.message || 'Failed to verify pairing key. Please check the terminal output.');
     } finally {
       setVerifying(false);
     }
   };
 
-  const handleReset = () => {
-    setStep('create');
+  const handleResetAndClose = () => {
+    setCurrentStep(1);
     setClusterName('');
     setDescription('');
     setCreatedCluster(null);
     setManifestData(null);
-    setConnectionCode('');
+    setInputConnectionCode('');
     setVerifying(false);
     setVerifySuccess(false);
-    setAgentStatus('pending');
+    setAgentPulseDetected(false);
     setError(null);
     onClose();
+  };
+
+  const formatCountdown = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
   };
 
   return (
     <Modal
       isOpen={isOpen}
-      onClose={handleReset}
-      title={step === 'create' ? 'Register Kubernetes Cluster' : `Connect Cluster — ${createdCluster?.name}`}
-      maxWidth={step === 'create' ? 'md' : 'xl'}
+      onClose={handleResetAndClose}
+      title="Connect Kubernetes Cluster"
+      maxWidth={currentStep === 1 ? 'md' : 'xl'}
     >
-      {step === 'create' ? (
-        <form onSubmit={handleCreate} className="space-y-4">
-          <div className="text-xs text-zinc-400">
-            Create a pending cluster configuration in SkyOps. You will receive an installation command and single-use connection code to link your live Kubernetes cluster.
-          </div>
-
-          {error && <div className="p-3 text-xs rounded bg-rose-950/40 border border-rose-800 text-rose-300 font-mono">{error}</div>}
-
-          <div>
-            <label className="block text-xs font-mono font-medium text-zinc-300 mb-1">
-              Cluster Name <span className="text-rose-400">*</span>
-            </label>
-            <input
-              type="text"
-              required
-              placeholder="e.g. production-gke-asia"
-              value={clusterName}
-              onChange={(e) => setClusterName(e.target.value)}
-              className="w-full px-3 py-2 text-sm bg-zinc-950 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-sky-500 font-mono"
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-mono font-medium text-zinc-300 mb-1">Description (Optional)</label>
-            <textarea
-              rows={2}
-              placeholder="Production customer workload cluster in GCP"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              className="w-full px-3 py-2 text-sm bg-zinc-950 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-sky-500 font-mono"
-            />
-          </div>
-
-          <div className="flex justify-end gap-2 pt-3 border-t border-zinc-800">
-            <Button variant="ghost" onClick={handleReset} type="button">
-              Cancel
-            </Button>
-            <Button variant="primary" type="submit" disabled={loading || !clusterName.trim()}>
-              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Create Cluster & Generate Agent'}
-            </Button>
-          </div>
-        </form>
-      ) : (
-        <div className="space-y-6">
-          {/* Cluster Metadata Header */}
-          <div className="p-3.5 rounded-lg bg-zinc-950 border border-zinc-800/80 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono">
-            <div>
-              <span className="text-zinc-500 block">Cluster ID</span>
-              <span className="text-zinc-200 font-semibold truncate block">{manifestData?.clusterId}</span>
-            </div>
-            <div>
-              <span className="text-zinc-500 block">Namespace</span>
-              <span className="text-zinc-200 block">{manifestData?.namespace || 'skyops-system'}</span>
-            </div>
-            <div>
-              <span className="text-zinc-500 block">Agent Image</span>
-              <span className="text-sky-400 block truncate">skyops-agent:{manifestData?.agentVersion || 'sha-fb3a472'}</span>
-            </div>
-            <div>
-              <span className="text-zinc-500 block">Ingress Server</span>
-              <span className="text-zinc-200 truncate block">{manifestData?.serverUrl}</span>
-            </div>
-          </div>
-
-          {/* STEP 1: Install SkyOps Agent */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="w-5 h-5 rounded-full bg-sky-500/20 text-sky-400 border border-sky-500/40 text-xs font-mono font-bold flex items-center justify-center">
-                  1
-                </span>
-                <h3 className="text-sm font-semibold text-zinc-100 font-mono">Install SkyOps Agent</h3>
-              </div>
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => setInstallMethod('command')}
-                  className={`px-2.5 py-1 text-[11px] font-mono rounded ${
-                    installMethod === 'command'
-                      ? 'bg-zinc-800 text-sky-400 border border-zinc-700'
-                      : 'text-zinc-400 hover:text-zinc-200'
+      <div className="space-y-6">
+        {/* Step Progress Indicator */}
+        <div className="flex items-center justify-between border-b border-zinc-800 pb-4">
+          {[
+            { step: 1, label: 'Cluster Details' },
+            { step: 2, label: 'Install Agent' },
+            { step: 3, label: 'Verify Key' },
+            { step: 4, label: 'Connected' }
+          ].map((item, idx) => {
+            const isCompleted = currentStep > item.step || (item.step === 4 && verifySuccess);
+            const isCurrent = currentStep === item.step;
+            return (
+              <div key={item.step} className="flex items-center gap-2">
+                <div
+                  className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-mono font-bold transition-all ${
+                    isCompleted
+                      ? 'bg-emerald-500 text-zinc-950'
+                      : isCurrent
+                      ? 'bg-sky-500 text-zinc-950 ring-4 ring-sky-950'
+                      : 'bg-zinc-800 text-zinc-400'
                   }`}
                 >
-                  Quick Command
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setInstallMethod('yaml')}
-                  className={`px-2.5 py-1 text-[11px] font-mono rounded ${
-                    installMethod === 'yaml'
-                      ? 'bg-zinc-800 text-sky-400 border border-zinc-700'
-                      : 'text-zinc-400 hover:text-zinc-200'
-                  }`}
-                >
-                  Full YAML
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setInstallMethod('helm')}
-                  className={`px-2.5 py-1 text-[11px] font-mono rounded ${
-                    installMethod === 'helm'
-                      ? 'bg-zinc-800 text-sky-400 border border-zinc-700'
-                      : 'text-zinc-400 hover:text-zinc-200'
-                  }`}
-                >
-                  Helm
-                </button>
-              </div>
-            </div>
-
-            <p className="text-xs text-zinc-400">
-              Run this command in your Kubernetes cluster to deploy the read-only observability agent daemon.
-            </p>
-
-            {installMethod === 'command' && manifestData && (
-              <CodeBlock
-                code={manifestData.installCommand || `kubectl apply -f ${manifestData.serverUrl}/api/v1/clusters/${manifestData.clusterId}/manifest.yaml`}
-                language="bash"
-                title="Single-Line Installation Command"
-              />
-            )}
-
-            {installMethod === 'yaml' && manifestData && (
-              <CodeBlock
-                code={manifestData.kubectlManifest}
-                language="yaml"
-                title="skyops-agent.yaml"
-              />
-            )}
-
-            {installMethod === 'helm' && manifestData && (
-              <CodeBlock
-                code={manifestData.helmCommand}
-                language="bash"
-                title="Helm Installation"
-              />
-            )}
-          </div>
-
-          {/* STEP 2: Complete Connection Handshake */}
-          <div className="space-y-3 pt-2 border-t border-zinc-800/80">
-            <div className="flex items-center gap-2">
-              <span className="w-5 h-5 rounded-full bg-sky-500/20 text-sky-400 border border-sky-500/40 text-xs font-mono font-bold flex items-center justify-center">
-                2
-              </span>
-              <h3 className="text-sm font-semibold text-zinc-100 font-mono">Complete Connection Handshake</h3>
-            </div>
-
-            <p className="text-xs text-zinc-400">
-              After installing the agent, verify the single-use connection code generated for your cluster to activate live telemetry and incident monitoring.
-            </p>
-
-            {/* Live Agent Detection Indicator */}
-            <div
-              className={`p-3 rounded-lg border flex items-center justify-between text-xs font-mono transition-colors ${
-                verifySuccess || agentStatus === 'connected'
-                  ? 'bg-emerald-950/40 border-emerald-800/60 text-emerald-300'
-                  : agentStatus === 'agent_detected'
-                  ? 'bg-sky-950/40 border-sky-800/60 text-sky-300'
-                  : 'bg-zinc-950 border-zinc-800 text-zinc-400'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                {verifySuccess || agentStatus === 'connected' ? (
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                ) : agentStatus === 'agent_detected' ? (
-                  <Radio className="w-4 h-4 text-sky-400 animate-pulse" />
-                ) : (
-                  <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse" />
-                )}
-
-                <span>
-                  {verifySuccess || agentStatus === 'connected'
-                    ? 'Cluster Connected — Telemetry Active'
-                    : agentStatus === 'agent_detected'
-                    ? 'Agent Detected in Cluster — Ready to connect'
-                    : 'Awaiting Agent Handshake Contact...'}
-                </span>
-              </div>
-              <span className="text-[11px] text-zinc-500">
-                {verifySuccess ? 'Verified' : 'Polling every 3s'}
-              </span>
-            </div>
-
-            {error && (
-              <div className="p-3 text-xs rounded bg-rose-950/40 border border-rose-800 text-rose-300 font-mono">
-                {error}
-              </div>
-            )}
-
-            {!verifySuccess ? (
-              <form onSubmit={handleVerifyConnect} className="space-y-3">
-                <div>
-                  <label className="block text-xs font-mono font-medium text-zinc-300 mb-1">
-                    Connection Registration Code
-                  </label>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      required
-                      placeholder="SKYOPS-CONNECT-XXXX-XXXX"
-                      value={connectionCode}
-                      onChange={(e) => setConnectionCode(e.target.value.toUpperCase())}
-                      className="flex-1 px-3 py-2 text-sm bg-zinc-950 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-sky-500 font-mono tracking-wider"
-                    />
-                    <Button
-                      variant="primary"
-                      type="submit"
-                      disabled={verifying || !connectionCode.trim()}
-                      icon={verifying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}
-                    >
-                      {verifying ? 'Verifying...' : 'Connect'}
-                    </Button>
-                  </div>
+                  {isCompleted ? <Check className="w-3.5 h-3.5 stroke-[3]" /> : item.step}
                 </div>
-                <div className="text-[11px] font-mono text-zinc-500 flex items-center gap-1.5">
-                  <KeyRound className="w-3 h-3 text-zinc-400" />
-                  <span>The code is single-use and short-lived for cluster security.</span>
+                <span
+                  className={`text-xs font-mono hidden sm:inline ${
+                    isCurrent ? 'text-zinc-100 font-semibold' : 'text-zinc-500'
+                  }`}
+                >
+                  {item.label}
+                </span>
+                {idx < 3 && <div className="w-6 sm:w-10 h-[1px] bg-zinc-800 ml-1 sm:ml-2" />}
+              </div>
+            );
+          })}
+        </div>
+
+        {error && (
+          <div className="p-3.5 text-xs rounded-xl bg-rose-950/40 border border-rose-800 text-rose-300 font-mono flex items-start gap-2.5">
+            <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+            <div>{error}</div>
+          </div>
+        )}
+
+        {/* STEP 1: Cluster Details */}
+        {currentStep === 1 && (
+          <form onSubmit={handleCreateCluster} className="space-y-4">
+            <div className="text-xs text-zinc-400 leading-relaxed">
+              Register a target Kubernetes cluster with SkyOps. You will be provided with production Helm charts and a single-use pairing key to authenticate the agent.
+            </div>
+
+            <div>
+              <label className="block text-xs font-mono font-medium text-zinc-300 mb-1.5">
+                Cluster Name <span className="text-rose-400">*</span>
+              </label>
+              <input
+                type="text"
+                required
+                placeholder="e.g. production-gke-asia"
+                value={clusterName}
+                onChange={(e) => setClusterName(e.target.value)}
+                className="w-full px-3 py-2 text-sm bg-zinc-950 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-sky-500 font-mono"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-mono font-medium text-zinc-300 mb-1.5">Environment Tag</label>
+              <div className="grid grid-cols-3 gap-2">
+                {(['production', 'staging', 'development'] as const).map((env) => (
+                  <button
+                    key={env}
+                    type="button"
+                    onClick={() => setEnvironmentType(env)}
+                    className={`py-2 px-3 text-xs font-mono rounded-lg border text-center capitalize transition-all ${
+                      environmentType === env
+                        ? 'border-sky-500 bg-sky-950/30 text-sky-300'
+                        : 'border-zinc-800 bg-zinc-950 text-zinc-400 hover:text-zinc-200'
+                    }`}
+                  >
+                    {env}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-mono font-medium text-zinc-300 mb-1.5">Description (Optional)</label>
+              <textarea
+                rows={2}
+                placeholder="Primary workload cluster hosting customer-facing microservices"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                className="w-full px-3 py-2 text-sm bg-zinc-950 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-sky-500 font-mono"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-zinc-800">
+              <Button variant="ghost" onClick={handleResetAndClose} type="button">
+                Cancel
+              </Button>
+              <Button variant="primary" type="submit" disabled={loading || !clusterName.trim()}>
+                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Next: Configure Agent'}
+              </Button>
+            </div>
+          </form>
+        )}
+
+        {/* STEP 2: Install Agent */}
+        {currentStep === 2 && createdCluster && manifestData && (
+          <div className="space-y-5">
+            <div className="p-3.5 bg-zinc-950 border border-zinc-800 rounded-xl grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs font-mono">
+              <div>
+                <div className="text-zinc-500">Cluster ID</div>
+                <div className="text-zinc-200 font-semibold truncate">{createdCluster.id}</div>
+              </div>
+              <div>
+                <div className="text-zinc-500">Namespace</div>
+                <div className="text-zinc-200 font-semibold">{manifestData.namespace || 'skyops-system'}</div>
+              </div>
+              <div>
+                <div className="text-zinc-500">RBAC Scope</div>
+                <div className="text-emerald-400 font-semibold flex items-center gap-1">
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  Read-Only (Non-Admin)
                 </div>
-              </form>
+              </div>
+            </div>
+
+            {/* Install method toggle */}
+            <div className="flex items-center gap-2 border-b border-zinc-800 pb-2">
+              <button
+                type="button"
+                onClick={() => setInstallMethod('helm')}
+                className={`text-xs font-mono px-3 py-1.5 rounded-lg font-medium transition-all ${
+                  installMethod === 'helm'
+                    ? 'bg-zinc-800 text-sky-400'
+                    : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                Helm 3 (Recommended)
+              </button>
+              <button
+                type="button"
+                onClick={() => setInstallMethod('kubectl')}
+                className={`text-xs font-mono px-3 py-1.5 rounded-lg font-medium transition-all ${
+                  installMethod === 'kubectl'
+                    ? 'bg-zinc-800 text-sky-400'
+                    : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                Kubectl Apply
+              </button>
+            </div>
+
+            {installMethod === 'helm' ? (
+              <div className="space-y-3">
+                <div className="text-xs text-zinc-300">
+                  Execute the following Helm command in your terminal configured with <code className="text-sky-400 font-mono">kubeconfig</code>:
+                </div>
+                <CodeBlock code={manifestData.helmCommand} language="bash" />
+              </div>
             ) : (
-              <div className="p-4 rounded-lg bg-emerald-950/30 border border-emerald-800/60 text-emerald-300 text-xs font-mono flex items-center justify-between">
-                <div>
-                  <div className="font-semibold text-emerald-200">Handshake Complete!</div>
-                  <div className="text-emerald-400/80 text-[11px] mt-0.5">
-                    Your Kubernetes cluster is now connected and actively ingesting state telemetry.
-                  </div>
+              <div className="space-y-3">
+                <div className="text-xs text-zinc-300">
+                  Deploy the SkyOps Agent daemon using a direct manifest stream:
                 </div>
-                <Button variant="primary" size="sm" onClick={handleReset} icon={<ArrowRight className="w-3.5 h-3.5" />}>
-                  Go to Cluster
+                <CodeBlock code={manifestData.installCommand} language="bash" />
+                <div className="flex justify-end">
+                  <a
+                    href={manifestData.manifestDownloadUrl}
+                    download={`skyops-agent-${createdCluster.id}.yaml`}
+                    className="inline-flex items-center gap-1.5 text-xs font-mono text-sky-400 hover:text-sky-300 transition-colors"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Download raw YAML manifest
+                  </a>
+                </div>
+              </div>
+            )}
+
+            {/* RBAC Security Note */}
+            <div className="p-3 bg-zinc-900/60 border border-zinc-800 rounded-xl text-[11px] font-mono text-zinc-400 space-y-1">
+              <div className="text-zinc-200 font-semibold flex items-center gap-1.5">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                Security & Least Privilege Guarantee
+              </div>
+              <div>
+                SkyOps Agent runs as unprivileged user <code className="text-zinc-300">UID 65532</code> with a read-only root filesystem. It only observes metadata (Pods, Nodes, Deployments, Events) and cannot execute commands or alter cluster state.
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-3 border-t border-zinc-800">
+              <Button variant="ghost" onClick={() => setCurrentStep(1)}>
+                <ArrowLeft className="w-4 h-4 mr-1.5" />
+                Back
+              </Button>
+              <Button variant="primary" onClick={() => setCurrentStep(3)}>
+                Next: Verify Pairing Key
+                <ArrowRight className="w-4 h-4 ml-1.5" />
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* STEP 3: Verify Pairing Key */}
+        {currentStep === 3 && createdCluster && (
+          <div className="space-y-5">
+            <div className="p-4 bg-sky-950/20 border border-sky-900/50 rounded-xl space-y-2">
+              <div className="flex items-center justify-between text-xs font-mono">
+                <span className="text-sky-300 font-semibold flex items-center gap-1.5">
+                  <Terminal className="w-4 h-4 text-sky-400" />
+                  Terminal Pairing Handshake
+                </span>
+                <span className="text-amber-400 flex items-center gap-1">
+                  <Clock className="w-3.5 h-3.5" />
+                  Expires in {formatCountdown(timeRemainingSeconds)}
+                </span>
+              </div>
+              <div className="text-xs text-zinc-300 leading-relaxed">
+                When the agent container boots up, it detects the cluster and prints a single-use Connection Key to stdout. Inspect the agent logs or enter the pairing code below:
+              </div>
+              <CodeBlock
+                code={`kubectl logs -n ${manifestData?.namespace || 'skyops-system'} -l app.kubernetes.io/name=skyops-agent --tail=20`}
+                language="bash"
+              />
+            </div>
+
+            <form onSubmit={handleVerifyPairingKey} className="space-y-3">
+              <div>
+                <label className="block text-xs font-mono font-medium text-zinc-300 mb-1.5">
+                  Connection Key <span className="text-rose-400">*</span>
+                </label>
+                <div className="relative">
+                  <KeyRound className="w-4 h-4 text-zinc-500 absolute left-3 top-2.5" />
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. SKYOPS-7K4M-92PX"
+                    value={inputConnectionCode}
+                    onChange={(e) => setInputConnectionCode(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2 text-sm bg-zinc-950 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-sky-500 font-mono uppercase tracking-wider"
+                  />
+                </div>
+              </div>
+
+              {agentPulseDetected && (
+                <div className="p-2.5 rounded-lg bg-emerald-950/30 border border-emerald-800 text-emerald-300 text-xs font-mono flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                  <span>Agent pulse detected! Finalizing cluster registration...</span>
+                </div>
+              )}
+
+              <div className="flex items-center justify-between pt-3 border-t border-zinc-800">
+                <Button variant="ghost" onClick={() => setCurrentStep(2)} type="button">
+                  <ArrowLeft className="w-4 h-4 mr-1.5" />
+                  Back to Manifest
+                </Button>
+                <Button
+                  variant="primary"
+                  type="submit"
+                  disabled={verifying || !inputConnectionCode.trim() || timeRemainingSeconds === 0}
+                >
+                  {verifying ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
+                      Verifying Pairing Key...
+                    </>
+                  ) : (
+                    'Verify & Link Cluster'
+                  )}
                 </Button>
               </div>
-            )}
+            </form>
           </div>
+        )}
 
-          <div className="flex justify-end gap-2 pt-3 border-t border-zinc-800">
-            <Button variant="outline" onClick={handleReset}>
-              {verifySuccess ? 'Close' : 'Cancel / Close'}
-            </Button>
+        {/* STEP 4: Connected Success */}
+        {currentStep === 4 && createdCluster && (
+          <div className="space-y-6 text-center py-4">
+            <div className="w-14 h-14 rounded-full bg-emerald-950 border border-emerald-800 flex items-center justify-center mx-auto text-emerald-400 shadow-lg shadow-emerald-950/40">
+              <CheckCircle2 className="w-8 h-8" />
+            </div>
+
+            <div className="space-y-1">
+              <h3 className="text-base font-semibold text-zinc-100">
+                Kubernetes Cluster Successfully Connected!
+              </h3>
+              <p className="text-xs text-zinc-400 font-mono">
+                Cluster <strong className="text-sky-400">{createdCluster.name}</strong> is now securely authenticated and transmitting telemetry.
+              </p>
+            </div>
+
+            <div className="p-3.5 bg-zinc-950 border border-zinc-800 rounded-xl grid grid-cols-3 gap-2 text-xs font-mono text-left">
+              <div>
+                <div className="text-zinc-500">Status</div>
+                <div className="text-emerald-400 font-semibold flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  ONLINE
+                </div>
+              </div>
+              <div>
+                <div className="text-zinc-500">Agent Version</div>
+                <div className="text-zinc-200 font-semibold">{createdCluster.agentVersion || 'v1.4.2'}</div>
+              </div>
+              <div>
+                <div className="text-zinc-500">Pairing Security</div>
+                <div className="text-emerald-400 font-semibold">Key Consumed</div>
+              </div>
+            </div>
+
+            <div className="pt-2">
+              <Button
+                variant="primary"
+                onClick={handleResetAndClose}
+                className="w-full justify-center"
+              >
+                Go to Cluster Dashboard
+              </Button>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </Modal>
   );
 };

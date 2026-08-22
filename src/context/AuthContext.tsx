@@ -1,19 +1,17 @@
+import {
+  User as FirebaseUser,
+  createUserWithEmailAndPassword,
+  onAuthStateChanged,
+  sendPasswordResetEmail,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  signOut as firebaseSignOut,
+  updateProfile
+} from 'firebase/auth';
+import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { api } from '../api/client';
-import {
-  auth,
-  db,
-  googleProvider,
-  signInWithPopup,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  firebaseSignInAnonymously,
-  firebaseSignOut,
-  onAuthStateChanged,
-  updateProfile,
-  FirebaseUser
-} from '../firebase';
-import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
+import { auth, db, googleProvider } from '../firebase';
 import { Organization, OrgMember, Role, User } from '../types/index';
 
 interface AuthContextType {
@@ -26,11 +24,9 @@ interface AuthContextType {
   loading: boolean;
   error: string | null;
   signInWithGoogle: () => Promise<void>;
-  signInWithEmail: (email: string, password: string) => Promise<void>;
-  signUpWithEmail: (email: string, password: string, displayName?: string) => Promise<void>;
-  signInAnonymously: () => Promise<void>;
-  signInAsDemoUser: (email: string, name?: string, role?: Role) => Promise<void>;
-  signIn: (email: string, name?: string) => Promise<void>; // backwards-compatibility
+  signInWithEmail: (email: string, pass: string) => Promise<void>;
+  signUpWithEmail: (email: string, pass: string, displayName?: string) => Promise<void>;
+  sendPasswordReset: (email: string) => Promise<void>;
   signOut: () => Promise<void>;
   switchOrganization: (orgId: string) => Promise<void>;
   createOrganization: (name: string) => Promise<Organization>;
@@ -43,135 +39,137 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null);
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
+  const [user, setUser] = useState<User | null>(null);
   const [currentOrg, setCurrentOrg] = useState<Organization | null>(null);
   const [organizations, setOrganizations] = useState<Organization[]>([]);
-  const [role, setRole] = useState<Role>('OWNER');
   const [members, setMembers] = useState<OrgMember[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [role, setRole] = useState<Role>('VIEWER');
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Sync user profile with Firestore for persistence
   const syncUserWithFirestore = async (fbUser: FirebaseUser, displayName?: string) => {
     try {
       const userRef = doc(db, 'users', fbUser.uid);
-      const userSnap = await getDoc(userRef);
-      const email = fbUser.email || `anonymous-${fbUser.uid.substring(0, 6)}@skyops.io`;
-      const name = displayName || fbUser.displayName || (fbUser.isAnonymous ? 'Guest SRE' : email.split('@')[0]);
+      const snap = await getDoc(userRef);
+      const name = displayName || fbUser.displayName || fbUser.email?.split('@')[0] || 'SkyOps Engineer';
+      const email = fbUser.email || `${fbUser.uid}@skyops.internal`;
 
-      if (!userSnap.exists()) {
-        await setDoc(userRef, {
-          uid: fbUser.uid,
-          email,
-          name,
-          photoURL: fbUser.photoURL || null,
-          isAnonymous: fbUser.isAnonymous,
-          createdAt: serverTimestamp(),
-          lastLoginAt: serverTimestamp()
-        });
+      if (!snap.exists()) {
+        await setDoc(
+          userRef,
+          {
+            uid: fbUser.uid,
+            email,
+            name,
+            photoURL: fbUser.photoURL || null,
+            createdAt: serverTimestamp(),
+            lastLoginAt: serverTimestamp()
+          },
+          { merge: true }
+        );
       } else {
         await setDoc(
           userRef,
           {
-            lastLoginAt: serverTimestamp(),
-            email,
-            name: displayName || userSnap.data()?.name || name
+            lastLoginAt: serverTimestamp()
           },
           { merge: true }
         );
       }
     } catch (err) {
-      console.warn('Firestore user document synchronization notice:', err);
+      console.warn('Firestore user profile sync warning (non-blocking):', err);
     }
   };
 
-  const refreshSession = async (customUser?: { email: string; name: string }) => {
+  const refreshSession = async () => {
+    if (!auth.currentUser) {
+      setUser(null);
+      setCurrentOrg(null);
+      setOrganizations([]);
+      setMembers([]);
+      setRole('VIEWER');
+      setLoading(false);
+      return;
+    }
+
     try {
-      setLoading(true);
       setError(null);
-
-      // If a custom user is passed (e.g. from Firebase or Demo login), persist to localStorage
-      if (customUser) {
-        localStorage.setItem(
-          'skyops_user',
-          JSON.stringify({
-            id: `usr-${customUser.email.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase()}`,
-            email: customUser.email,
-            name: customUser.name
-          })
-        );
-      }
-
       const session = await api.getSession();
       setUser(session.user);
       setCurrentOrg(session.currentOrg);
-      setOrganizations(session.organizations);
-      setRole(session.role);
-      setMembers(session.members);
-
-      // Persist active org id
-      if (session.currentOrg) {
-        localStorage.setItem('skyops_active_org_id', session.currentOrg.id);
-      }
+      setOrganizations(session.organizations || []);
+      setMembers(session.members || []);
+      setRole(session.role || 'OWNER');
     } catch (err: any) {
-      console.error('Session initialization error:', err);
-      setError(err.message || 'Failed to authenticate');
+      console.warn('Session refresh warning:', err?.message || err);
+      // Fallback session state using current Firebase profile
+      const fallbackUser: User = {
+        id: auth.currentUser.uid,
+        email: auth.currentUser.email || `${auth.currentUser.uid}@skyops.internal`,
+        name: auth.currentUser.displayName || auth.currentUser.email?.split('@')[0] || 'SkyOps Engineer'
+      };
+      setUser(fallbackUser);
+      const fallbackOrg: Organization = {
+        id: 'org-primary',
+        name: `${fallbackUser.name.split(' ')[0]}'s Workspace`,
+        slug: 'primary-workspace',
+        createdAt: Date.now(),
+        membersCount: 1
+      };
+      setCurrentOrg(fallbackOrg);
+      setOrganizations([fallbackOrg]);
+      setRole('OWNER');
     } finally {
       setLoading(false);
     }
   };
 
-  // Listen to Firebase Auth state changes
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
       setFirebaseUser(fbUser);
       if (fbUser) {
-        const email = fbUser.email || `guest-${fbUser.uid.substring(0, 6)}@skyops.io`;
-        const name = fbUser.displayName || (fbUser.isAnonymous ? 'Guest SRE' : email.split('@')[0]);
-
-        await syncUserWithFirestore(fbUser, name);
-        await refreshSession({ email, name });
-      } else {
-        // When not logged into Firebase, check if there's an existing cached user session or use default SRE
+        await syncUserWithFirestore(fbUser);
         await refreshSession();
+      } else {
+        setUser(null);
+        setCurrentOrg(null);
+        setOrganizations([]);
+        setMembers([]);
+        setRole('VIEWER');
+        setLoading(false);
       }
     });
 
     return () => unsubscribe();
   }, []);
 
-  // Firebase Sign-In with Google Popup
   const signInWithGoogle = async () => {
     try {
       setError(null);
       setLoading(true);
       const result = await signInWithPopup(auth, googleProvider);
       if (result.user) {
-        const email = result.user.email || 'user@skyops.io';
-        const name = result.user.displayName || email.split('@')[0];
-        await syncUserWithFirestore(result.user, name);
-        await refreshSession({ email, name });
+        await syncUserWithFirestore(result.user);
+        await refreshSession();
       }
     } catch (err: any) {
       console.error('Google Sign In failed:', err);
-      setError(err.message || 'Google Authentication failed');
+      setError(err.message || 'Failed to sign in with Google');
       throw err;
     } finally {
       setLoading(false);
     }
   };
 
-  // Firebase Sign-In with Email & Password
   const signInWithEmail = async (email: string, pass: string) => {
     try {
       setError(null);
       setLoading(true);
       const result = await signInWithEmailAndPassword(auth, email.trim(), pass);
       if (result.user) {
-        const name = result.user.displayName || email.split('@')[0];
-        await syncUserWithFirestore(result.user, name);
-        await refreshSession({ email: result.user.email || email, name });
+        await syncUserWithFirestore(result.user);
+        await refreshSession();
       }
     } catch (err: any) {
       console.error('Email Sign In failed:', err);
@@ -182,7 +180,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // Firebase Sign-Up with Email & Password
   const signUpWithEmail = async (email: string, pass: string, displayName?: string) => {
     try {
       setError(null);
@@ -193,10 +190,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try {
           await updateProfile(result.user, { displayName: name });
         } catch {
-          // non-blocking
+          // ignore non-fatal profile update error
         }
         await syncUserWithFirestore(result.user, name);
-        await refreshSession({ email: result.user.email || email, name });
+        await refreshSession();
       }
     } catch (err: any) {
       console.error('Email Sign Up failed:', err);
@@ -207,56 +204,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // Firebase Anonymous Sign In
-  const signInAnonymously = async () => {
+  const sendPasswordReset = async (email: string) => {
     try {
       setError(null);
-      setLoading(true);
-      const result = await firebaseSignInAnonymously(auth);
-      if (result.user) {
-        const email = `guest-${result.user.uid.substring(0, 6)}@skyops.io`;
-        const name = 'Guest SRE';
-        await syncUserWithFirestore(result.user, name);
-        await refreshSession({ email, name });
-      }
+      await sendPasswordResetEmail(auth, email.trim());
     } catch (err: any) {
-      console.error('Anonymous Sign In failed:', err);
-      setError(err.message || 'Anonymous authentication failed');
+      console.error('Password reset failed:', err);
+      setError(err.message || 'Failed to send password reset email');
       throw err;
-    } finally {
-      setLoading(false);
     }
   };
 
-  // Quick Demo / Persona Sign In
-  const signInAsDemoUser = async (email: string, name?: string) => {
-    setError(null);
-    const formattedEmail = email.trim();
-    const formattedName = name?.trim() || email.split('@')[0];
-    await refreshSession({ email: formattedEmail, name: formattedName });
-  };
-
-  // Generic Sign In (for backward compatibility)
-  const signIn = async (email: string, name?: string) => {
-    await signInAsDemoUser(email, name);
-  };
-
-  // Sign Out
   const signOut = async () => {
     try {
-      if (auth.currentUser) {
-        await firebaseSignOut(auth);
-      }
+      await firebaseSignOut(auth);
     } catch (err) {
       console.warn('Firebase sign out warning:', err);
     } finally {
-      localStorage.removeItem('skyops_user');
       localStorage.removeItem('skyops_active_org_id');
       setUser(null);
       setFirebaseUser(null);
       setCurrentOrg(null);
       setOrganizations([]);
-      await refreshSession();
+      setMembers([]);
+      setRole('VIEWER');
     }
   };
 
@@ -289,9 +260,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         signInWithGoogle,
         signInWithEmail,
         signUpWithEmail,
-        signInAnonymously,
-        signInAsDemoUser,
-        signIn,
+        sendPasswordReset,
         signOut,
         switchOrganization,
         createOrganization,

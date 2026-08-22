@@ -29,57 +29,31 @@ class DataStore {
   private incidents: Map<string, Incident> = new Map(); // incidentId -> incident
   private incidentTimeline: Map<string, TimelineEvent[]> = new Map(); // incidentId -> events
   private incidentNotes: Map<string, IncidentNote[]> = new Map(); // incidentId -> notes
-  private incidentCounter = 1;
+  private incidentCounter = 1001;
 
   constructor() {
-    this.seedDefaultTenant();
+    if (process.env.NODE_ENV !== 'production') {
+      this.seedDevFixtures();
+    }
     this.startHeartbeatMonitor();
   }
 
   /**
-   * Initialize a default production-ready tenant for instant first-login experience
+   * Seed optional non-production developer fixtures if running locally
    */
-  private seedDefaultTenant() {
-    const defaultOrgId = 'org-production-sre';
-    const defaultOrg: Organization = {
-      id: defaultOrgId,
+  private seedDevFixtures() {
+    // Only in explicit development mode
+    if (process.env.NODE_ENV === 'production') return;
+
+    const devOrgId = 'org-production-sre';
+    const devOrg: Organization = {
+      id: devOrgId,
       name: 'Acme Platform Engineering',
       slug: 'acme-platform',
       createdAt: Date.now() - 30 * 86400000,
       membersCount: 3
     };
-    this.orgs.set(defaultOrgId, defaultOrg);
-
-    const defaultUser: User = {
-      id: 'usr-lead-sre',
-      email: 'sre-lead@acme.corp',
-      name: 'Alex Rivera (Staff SRE)'
-    };
-    this.users.set(defaultUser.id, defaultUser);
-
-    this.members.set(defaultOrgId, [
-      {
-        userId: defaultUser.id,
-        email: defaultUser.email,
-        name: defaultUser.name,
-        role: 'OWNER',
-        joinedAt: Date.now() - 30 * 86400000
-      },
-      {
-        userId: 'usr-devops-1',
-        email: 'devops-oncall@acme.corp',
-        name: 'Jordan Chen (DevOps)',
-        role: 'ENGINEER',
-        joinedAt: Date.now() - 20 * 86400000
-      },
-      {
-        userId: 'usr-sec-1',
-        email: 'security-audit@acme.corp',
-        name: 'Morgan Vance (SecOps)',
-        role: 'VIEWER',
-        joinedAt: Date.now() - 10 * 86400000
-      }
-    ]);
+    this.orgs.set(devOrgId, devOrg);
   }
 
   // --- Heartbeat & Connection Monitoring ---
@@ -125,18 +99,26 @@ class DataStore {
     }, 15000);
   }
 
-  // --- Auth & Tenant Isolation ---
-  public getOrCreateUser(email: string, name: string): User {
-    const existing = Array.from(this.users.values()).find((u) => u.email.toLowerCase() === email.toLowerCase());
-    if (existing) return existing;
+  // --- Auth & User / Organization Management ---
+  public upsertUser(userData: { id: string; email: string; name: string }): User {
+    const existing = this.users.get(userData.id);
+    if (existing) {
+      existing.email = userData.email;
+      existing.name = userData.name;
+      return existing;
+    }
 
     const newUser: User = {
-      id: `usr-${crypto.randomBytes(6).toString('hex')}`,
-      email,
-      name
+      id: userData.id,
+      email: userData.email,
+      name: userData.name
     };
     this.users.set(newUser.id, newUser);
     return newUser;
+  }
+
+  public getUser(userId: string): User | null {
+    return this.users.get(userId) || null;
   }
 
   public getOrganizationsForUser(userId: string): Organization[] {
@@ -147,21 +129,17 @@ class DataStore {
         if (org) userOrgs.push(org);
       }
     }
-
-    if (userOrgs.length === 0) {
-      // Create user's default organization
-      const user = this.users.get(userId);
-      const orgName = user?.name ? `${user.name.split(' ')[0]}'s Workspace` : 'Production Cluster Workspace';
-      const newOrg = this.createOrganization(orgName, userId);
-      userOrgs.push(newOrg);
-    }
-
     return userOrgs;
   }
 
   public createOrganization(name: string, ownerUserId: string): Organization {
     const orgId = `org-${crypto.randomBytes(6).toString('hex')}`;
-    const slug = name.toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 30);
+    const slug = name
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '-')
+      .replace(/-+/g, '-')
+      .slice(0, 30);
+
     const org: Organization = {
       id: orgId,
       name,
@@ -176,7 +154,7 @@ class DataStore {
       {
         userId: ownerUserId,
         email: user?.email || '',
-        name: user?.name || 'Owner',
+        name: user?.name || 'Workspace Owner',
         role: 'OWNER',
         joinedAt: Date.now()
       }
@@ -219,6 +197,21 @@ class DataStore {
     return this.clusters.get(clusterId) || null;
   }
 
+  /**
+   * Generates a cryptographically random, human-friendly pairing code e.g. SKYOPS-7K4M-92PX
+   */
+  private generatePairingCode(): string {
+    const alphabet = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'; // Base32 unambiguous charset
+    const bytes = crypto.randomBytes(8);
+    let part1 = '';
+    let part2 = '';
+    for (let i = 0; i < 4; i++) {
+      part1 += alphabet[bytes[i] % alphabet.length];
+      part2 += alphabet[bytes[i + 4] % alphabet.length];
+    }
+    return `SKYOPS-${part1}-${part2}`;
+  }
+
   public createCluster(
     orgId: string,
     name: string,
@@ -228,12 +221,11 @@ class DataStore {
     const rawToken = `sky_agent_${crypto.randomBytes(24).toString('hex')}`;
     const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
 
-    // Generate secure, short-lived single-use connection code e.g. SKYOPS-CONNECT-XXXX-XXXX
-    const codeSuffix = crypto.randomBytes(4).toString('hex').toUpperCase();
-    const connectionCode = `SKYOPS-CONNECT-${codeSuffix.slice(0, 4)}-${codeSuffix.slice(4)}`;
-    const connectionCodeExpiresAt = Date.now() + 30 * 60 * 1000; // 30 minutes validity
+    // Generate single-use, 15-minute connection pairing key
+    const connectionCode = this.generatePairingCode();
+    const connectionCodeExpiresAt = Date.now() + 15 * 60 * 1000; // 15 minutes validity
 
-    // Generate secure, separate manifest installation key (prevents URL-leak of raw agent token)
+    // Generate separate manifest installation key for secure automated download
     const installKey = `sky_inst_${crypto.randomBytes(20).toString('hex')}`;
     const installKeyExpiresAt = Date.now() + 60 * 60 * 1000; // 60 minutes validity
 
@@ -266,7 +258,7 @@ class DataStore {
   public verifyClusterConnection(clusterId: string, orgId: string, providedCode: string): Cluster {
     const cluster = this.clusters.get(clusterId);
     if (!cluster || cluster.orgId !== orgId) {
-      throw new Error('Cluster not found');
+      throw new Error('Cluster not found in active organization');
     }
 
     if (cluster.connectionState === 'connected' && cluster.agentStatus === 'CONNECTED') {
@@ -274,25 +266,27 @@ class DataStore {
     }
 
     if (!cluster.connectionCode) {
-      throw new Error('No active connection code found for this cluster. Please regenerate agent credentials.');
+      throw new Error('No active pairing key found for this cluster or key was already consumed. Please regenerate pairing credentials.');
     }
 
     if (cluster.connectionCodeExpiresAt && Date.now() > cluster.connectionCodeExpiresAt) {
-      throw new Error('The connection code has expired. Please regenerate agent credentials.');
+      throw new Error('The pairing key has expired (valid for 15 minutes). Please generate a new connection key.');
     }
 
-    const cleanProvided = providedCode.trim().toUpperCase().replace(/\s+/g, '');
-    const cleanStored = cluster.connectionCode.trim().toUpperCase().replace(/\s+/g, '');
+    const cleanProvided = providedCode.trim().toUpperCase().replace(/[\s-]+/g, '');
+    const cleanStored = cluster.connectionCode.trim().toUpperCase().replace(/[\s-]+/g, '');
 
     if (cleanProvided !== cleanStored) {
-      throw new Error('Invalid connection code. Please enter the exact registration code generated for this cluster.');
+      throw new Error('Invalid connection key. Please verify the key displayed by the SkyOps Agent terminal output.');
     }
 
-    // Success: Activate connection and invalidate the single-use connection code and installKey
+    // Success: Activate connection and permanently invalidate the single-use pairing code and installKey
     cluster.status = 'HEALTHY';
     cluster.agentStatus = 'CONNECTED';
     cluster.connectionState = 'connected';
     cluster.connectedAt = Date.now();
+    cluster.lastHeartbeat = Date.now();
+    cluster.lastHeartbeatAt = Date.now();
     cluster.connectionCode = undefined;
     cluster.connectionCodeExpiresAt = undefined;
     cluster.installKey = undefined;
@@ -307,7 +301,7 @@ class DataStore {
   ): { cluster: Cluster; rawToken: string; connectionCode: string; installKey: string } {
     const cluster = this.clusters.get(clusterId);
     if (!cluster || cluster.orgId !== orgId) {
-      throw new Error('Cluster not found');
+      throw new Error('Cluster not found in active organization');
     }
 
     // Invalidate existing tokens for this cluster
@@ -321,9 +315,8 @@ class DataStore {
     const rawToken = `sky_agent_${crypto.randomBytes(24).toString('hex')}`;
     const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
 
-    const codeSuffix = crypto.randomBytes(4).toString('hex').toUpperCase();
-    const connectionCode = `SKYOPS-CONNECT-${codeSuffix.slice(0, 4)}-${codeSuffix.slice(4)}`;
-    const connectionCodeExpiresAt = Date.now() + 30 * 60 * 1000;
+    const connectionCode = this.generatePairingCode();
+    const connectionCodeExpiresAt = Date.now() + 15 * 60 * 1000;
 
     const installKey = `sky_inst_${crypto.randomBytes(20).toString('hex')}`;
     const installKeyExpiresAt = Date.now() + 60 * 60 * 1000;
@@ -401,7 +394,7 @@ class DataStore {
   ): { status: string; clusterId: string; connectionCode?: string; serverTime: number } {
     const cluster = this.clusters.get(clusterId);
     if (!cluster) {
-      throw new Error('Cluster not found');
+      throw new Error('Cluster not found for this agent token');
     }
 
     const now = Date.now();

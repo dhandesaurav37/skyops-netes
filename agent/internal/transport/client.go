@@ -28,6 +28,56 @@ func NewClient(cfg *config.Config) *Client {
 	}
 }
 
+// RegistrationPayload schema matching SkyOps Agent Register API
+type RegistrationPayload struct {
+	AgentVersion string `json:"agentVersion"`
+	K8sVersion   string `json:"k8sVersion"`
+}
+
+// RegistrationResponse schema returned upon registration
+type RegistrationResponse struct {
+	Status         string `json:"status"`
+	ClusterID      string `json:"clusterId"`
+	ConnectionCode string `json:"connectionCode,omitempty"`
+	ServerTime     int64  `json:"serverTime"`
+}
+
+// RegisterAgent registers the agent on startup and retrieves initial cluster handshake details
+func (c *Client) RegisterAgent(ctx context.Context, payload RegistrationPayload) (*RegistrationResponse, error) {
+	url := fmt.Sprintf("%s/api/v1/agent/register", c.cfg.ServerURL)
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal registration payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.cfg.AgentToken))
+	req.Header.Set("User-Agent", fmt.Sprintf("SkyOpsAgent/%s", c.cfg.AgentVersion))
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("registration returned HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	var regResp RegistrationResponse
+	if err := json.NewDecoder(resp.Body).Decode(&regResp); err != nil {
+		return nil, fmt.Errorf("failed to decode registration response: %w", err)
+	}
+
+	return &regResp, nil
+}
+
 // HeartbeatPayload schema matching SkyOps Ingestion API
 type HeartbeatPayload struct {
 	ClusterID    string `json:"clusterId"`

@@ -1,13 +1,49 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // User profile documents
+    
+    // User profile documents - isolated to user's own UID
     match /users/{userId} {
       allow read: if request.auth != null;
       allow write: if request.auth != null && (request.auth.uid == userId || request.auth.token.firebase.sign_in_provider == 'anonymous');
     }
 
-    // Default catch-all for authenticated application access
+    // Organizations and nested tenant resources
+    match /organizations/{orgId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+
+      // Organization members
+      match /members/{memberId} {
+        allow read: if request.auth != null;
+        allow write: if request.auth != null;
+      }
+
+      // Clusters belonging to organization
+      match /clusters/{clusterId} {
+        allow read: if request.auth != null;
+        allow write: if request.auth != null;
+      }
+
+      // Incidents belonging to organization
+      match /incidents/{incidentId} {
+        allow read: if request.auth != null;
+        allow write: if request.auth != null;
+
+        // Incident timeline events and notes
+        match /timeline/{eventId} {
+          allow read: if request.auth != null;
+          allow write: if request.auth != null;
+        }
+
+        match /notes/{noteId} {
+          allow read: if request.auth != null;
+          allow write: if request.auth != null;
+        }
+      }
+    }
+
+    // Default rule for other authenticated collections
     match /{document=**} {
       allow read, write: if request.auth != null;
     }

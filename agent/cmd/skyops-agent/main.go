@@ -16,6 +16,25 @@ import (
 	"github.com/skyops-io/skyops/agent/internal/transport"
 )
 
+func printPairingBanner(connectionCode string) {
+	fmt.Println()
+	fmt.Println("========================================")
+	fmt.Println("       SkyOps Agent Installed           ")
+	fmt.Println("========================================")
+	fmt.Println()
+	fmt.Println("Cluster detected successfully.")
+	fmt.Println()
+	fmt.Println("Connection Key:")
+	fmt.Println()
+	fmt.Printf("    %s\n", connectionCode)
+	fmt.Println()
+	fmt.Println("Enter this key in the SkyOps dashboard.")
+	fmt.Println()
+	fmt.Println("This key expires in 15 minutes.")
+	fmt.Println("========================================")
+	fmt.Println()
+}
+
 func main() {
 	// Initialize structured logger
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
@@ -46,6 +65,23 @@ func main() {
 	// Initialize components
 	telemetryQueue := queue.NewBoundedQueue(cfg.QueueCapacity)
 	transportClient := transport.NewClient(cfg)
+
+	// Register Agent on startup
+	regPayload := transport.RegistrationPayload{
+		AgentVersion: cfg.AgentVersion,
+		K8sVersion:   "v1.31.2",
+	}
+
+	regResp, regErr := transportClient.RegisterAgent(ctx, regPayload)
+	if regErr != nil {
+		slog.Warn("Initial registration notice (will retry via heartbeat)", "error", regErr)
+	} else if regResp != nil {
+		slog.Info("Agent registered successfully with central platform", "clusterId", regResp.ClusterID, "status", regResp.Status)
+		if regResp.ConnectionCode != "" {
+			printPairingBanner(regResp.ConnectionCode)
+		}
+	}
+
 	heartbeatService := heartbeat.NewService(cfg, transportClient)
 	resourceCollector := collector.NewCollector(cfg, transportClient, telemetryQueue)
 

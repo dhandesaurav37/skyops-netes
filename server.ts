@@ -3,6 +3,15 @@ import dotenv from 'dotenv';
 import express, { NextFunction, Request, Response } from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
+import { z } from 'zod';
+import {
+  AuthenticatedAgentRequest,
+  AuthenticatedUserRequest,
+  requireAgentAuth,
+  requireOrgMembership,
+  requireRole,
+  requireUserAuth
+} from './server/auth';
 import { generateHelmCommand, generateKubernetesManifest } from './server/manifestGenerator';
 import { store } from './server/store';
 import { KubernetesResource } from './src/types/index';
@@ -13,7 +22,21 @@ const app = express();
 const PORT = 3000;
 
 // Security & Parsing Middlewares
-app.use(cors());
+app.use(
+  cors({
+    origin: true,
+    credentials: true,
+    methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-org-id']
+  })
+);
+
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  next();
+});
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -28,64 +51,8 @@ app.use((req, res, next) => {
   next();
 });
 
-// --- Auth & Tenant Context Middleware ---
-interface AuthenticatedRequest extends Request {
-  user?: { id: string; email: string; name: string };
-  orgId?: string;
-  userRole?: string;
-}
-
-function tenantAuth(req: AuthenticatedRequest, res: Response, next: NextFunction) {
-  const authHeader = req.headers.authorization;
-  const orgHeader = req.headers['x-org-id'] as string;
-  const userEmail = (req.headers['x-user-email'] as string) || 'sre-lead@acme.corp';
-  const userName = (req.headers['x-user-name'] as string) || 'Alex Rivera (Staff SRE)';
-
-  const user = store.getOrCreateUser(userEmail, userName);
-  req.user = user;
-
-  const userOrgs = store.getOrganizationsForUser(user.id);
-  const targetOrgId = orgHeader || (userOrgs.length > 0 ? userOrgs[0].id : 'org-production-sre');
-
-  const access = store.checkUserOrgAccess(user.id, targetOrgId);
-  if (!access.hasAccess && userOrgs.length > 0) {
-    // Default to first accessible org
-    req.orgId = userOrgs[0].id;
-    req.userRole = store.checkUserOrgAccess(user.id, userOrgs[0].id).role;
-  } else {
-    req.orgId = targetOrgId;
-    req.userRole = access.role || 'OWNER';
-  }
-
-  next();
-}
-
-// --- Agent Bearer Authentication Middleware ---
-interface AgentRequest extends Request {
-  clusterId?: string;
-  orgId?: string;
-}
-
-function agentAuth(req: AgentRequest, res: Response, next: NextFunction) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Unauthorized: Missing or malformed Bearer token' });
-  }
-
-  const rawToken = authHeader.substring(7).trim();
-  const verified = store.authenticateAgentToken(rawToken);
-  if (!verified) {
-    return res.status(403).json({ error: 'Forbidden: Invalid or revoked agent token' });
-  }
-
-  req.clusterId = verified.clusterId;
-  req.orgId = verified.orgId;
-  next();
-}
-
 // Helper to resolve public API / SaaS endpoint URL for remote Kubernetes agents
 function getPublicServerUrl(req?: Request): string {
-  // If explicitly configured in environment:
   if (
     process.env.SKYOPS_API_URL &&
     process.env.SKYOPS_API_URL.startsWith('http') &&
@@ -113,15 +80,20 @@ function getPublicServerUrl(req?: Request): string {
 
 // --- Health Check ---
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', service: 'SkyOps Central Ingestion API', version: 'v1.4.2' });
+  res.json({
+    status: 'ok',
+    service: 'SkyOps Central Ingestion API',
+    version: 'v1.4.2',
+    timestamp: Date.now()
+  });
 });
 
 // --- Auth & Session ---
-app.post('/api/v1/auth/session', tenantAuth, (req: AuthenticatedRequest, res) => {
+app.post('/api/v1/auth/session', requireUserAuth, requireOrgMembership, (req: AuthenticatedUserRequest, res) => {
   const user = req.user!;
   const orgs = store.getOrganizationsForUser(user.id);
   const currentOrg = orgs.find((o) => o.id === req.orgId) || orgs[0];
-  const members = store.getOrgMembers(currentOrg.id);
+  const members = currentOrg ? store.getOrgMembers(currentOrg.id) : [];
 
   res.json({
     user,
@@ -132,38 +104,69 @@ app.post('/api/v1/auth/session', tenantAuth, (req: AuthenticatedRequest, res) =>
   });
 });
 
+app.get('/api/v1/auth/me', requireUserAuth, requireOrgMembership, (req: AuthenticatedUserRequest, res) => {
+  const user = req.user!;
+  const orgs = store.getOrganizationsForUser(user.id);
+  const currentOrg = orgs.find((o) => o.id === req.orgId) || orgs[0];
+
+  res.json({
+    user,
+    currentOrg,
+    role: req.userRole || 'OWNER'
+  });
+});
+
 // --- Organizations ---
-app.get('/api/v1/orgs', tenantAuth, (req: AuthenticatedRequest, res) => {
+app.get('/api/v1/orgs', requireUserAuth, (req: AuthenticatedUserRequest, res) => {
   const orgs = store.getOrganizationsForUser(req.user!.id);
   res.json({ organizations: orgs });
 });
 
-app.post('/api/v1/orgs', tenantAuth, (req: AuthenticatedRequest, res) => {
-  const { name } = req.body;
-  if (!name || typeof name !== 'string') {
-    return res.status(400).json({ error: 'Organization name is required' });
+const CreateOrgSchema = z.object({
+  name: z.string().min(2, 'Organization name must be at least 2 characters').max(60)
+});
+
+app.post('/api/v1/orgs', requireUserAuth, (req: AuthenticatedUserRequest, res) => {
+  const parsed = CreateOrgSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid organization payload' });
   }
-  const org = store.createOrganization(name.trim(), req.user!.id);
+
+  const org = store.createOrganization(parsed.data.name.trim(), req.user!.id);
   res.status(201).json({ organization: org });
 });
 
+app.get('/api/v1/orgs/members', requireUserAuth, requireOrgMembership, (req: AuthenticatedUserRequest, res) => {
+  const members = store.getOrgMembers(req.orgId!);
+  res.json({ members });
+});
+
 // --- Clusters ---
-app.get('/api/v1/clusters', tenantAuth, (req: AuthenticatedRequest, res) => {
+app.get('/api/v1/clusters', requireUserAuth, requireOrgMembership, (req: AuthenticatedUserRequest, res) => {
   const clusters = store.getClusters(req.orgId!);
   res.json({ clusters });
 });
 
-app.post('/api/v1/clusters', tenantAuth, (req: AuthenticatedRequest, res) => {
-  const { name, description } = req.body;
-  if (!name || typeof name !== 'string') {
-    return res.status(400).json({ error: 'Cluster name is required' });
+const CreateClusterSchema = z.object({
+  name: z.string().min(2, 'Cluster name must be at least 2 characters').max(60),
+  description: z.string().max(300).optional()
+});
+
+app.post('/api/v1/clusters', requireUserAuth, requireOrgMembership, (req: AuthenticatedUserRequest, res) => {
+  const parsed = CreateClusterSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid cluster payload' });
   }
 
-  const { cluster, rawToken, connectionCode, installKey } = store.createCluster(req.orgId!, name.trim(), description);
+  const { cluster, rawToken, connectionCode, installKey } = store.createCluster(
+    req.orgId!,
+    parsed.data.name.trim(),
+    parsed.data.description
+  );
   res.status(201).json({ cluster, token: rawToken, connectionCode, installKey });
 });
 
-app.get('/api/v1/clusters/:id', tenantAuth, (req: AuthenticatedRequest, res) => {
+app.get('/api/v1/clusters/:id', requireUserAuth, requireOrgMembership, (req: AuthenticatedUserRequest, res) => {
   const cluster = store.getCluster(req.params.id, req.orgId!);
   if (!cluster) {
     return res.status(404).json({ error: 'Cluster not found' });
@@ -171,15 +174,19 @@ app.get('/api/v1/clusters/:id', tenantAuth, (req: AuthenticatedRequest, res) => 
   res.json({ cluster });
 });
 
-// Connect cluster using connection code handshake
-app.post('/api/v1/clusters/:id/connect', tenantAuth, (req: AuthenticatedRequest, res) => {
-  const { connectionCode } = req.body;
-  if (!connectionCode || typeof connectionCode !== 'string') {
-    return res.status(400).json({ error: 'Connection code is required' });
+// Connect cluster using connection code handshake (single-use pairing key)
+const ConnectClusterSchema = z.object({
+  connectionCode: z.string().min(4, 'Connection code is required')
+});
+
+app.post('/api/v1/clusters/:id/connect', requireUserAuth, requireOrgMembership, (req: AuthenticatedUserRequest, res) => {
+  const parsed = ConnectClusterSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid connection code' });
   }
 
   try {
-    const updated = store.verifyClusterConnection(req.params.id, req.orgId!, connectionCode);
+    const updated = store.verifyClusterConnection(req.params.id, req.orgId!, parsed.data.connectionCode);
     res.json({ success: true, cluster: updated });
   } catch (err: any) {
     res.status(400).json({ error: err?.message || 'Failed to verify connection code' });
@@ -187,45 +194,52 @@ app.post('/api/v1/clusters/:id/connect', tenantAuth, (req: AuthenticatedRequest,
 });
 
 // Regenerate credentials for cluster
-app.post('/api/v1/clusters/:id/regenerate-token', tenantAuth, (req: AuthenticatedRequest, res) => {
-  if (req.userRole !== 'OWNER' && req.userRole !== 'ADMIN') {
-    return res.status(403).json({ error: 'Only OWNER and ADMIN roles can regenerate agent credentials' });
+app.post(
+  '/api/v1/clusters/:id/regenerate-token',
+  requireUserAuth,
+  requireOrgMembership,
+  requireRole(['OWNER', 'ADMIN']),
+  (req: AuthenticatedUserRequest, res) => {
+    try {
+      const { cluster, rawToken, connectionCode, installKey } = store.regenerateClusterCredentials(req.params.id, req.orgId!);
+      res.json({ success: true, cluster, token: rawToken, connectionCode, installKey });
+    } catch (err: any) {
+      res.status(404).json({ error: err?.message || 'Cluster not found' });
+    }
   }
-
-  try {
-    const { cluster, rawToken, connectionCode, installKey } = store.regenerateClusterCredentials(req.params.id, req.orgId!);
-    res.json({ success: true, cluster, token: rawToken, connectionCode, installKey });
-  } catch (err: any) {
-    res.status(404).json({ error: err?.message || 'Cluster not found' });
-  }
-});
+);
 
 // Disconnect agent from cluster
-app.post('/api/v1/clusters/:id/disconnect', tenantAuth, (req: AuthenticatedRequest, res) => {
-  if (req.userRole !== 'OWNER' && req.userRole !== 'ADMIN') {
-    return res.status(403).json({ error: 'Only OWNER and ADMIN roles can disconnect clusters' });
+app.post(
+  '/api/v1/clusters/:id/disconnect',
+  requireUserAuth,
+  requireOrgMembership,
+  requireRole(['OWNER', 'ADMIN']),
+  (req: AuthenticatedUserRequest, res) => {
+    const success = store.disconnectCluster(req.params.id, req.orgId!);
+    if (!success) {
+      return res.status(404).json({ error: 'Cluster not found' });
+    }
+    res.json({ success: true, message: 'Cluster agent disconnected successfully' });
   }
+);
 
-  const success = store.disconnectCluster(req.params.id, req.orgId!);
-  if (!success) {
-    return res.status(404).json({ error: 'Cluster not found' });
+app.delete(
+  '/api/v1/clusters/:id',
+  requireUserAuth,
+  requireOrgMembership,
+  requireRole(['OWNER', 'ADMIN']),
+  (req: AuthenticatedUserRequest, res) => {
+    const deleted = store.deleteCluster(req.params.id, req.orgId!);
+    if (!deleted) {
+      return res.status(404).json({ error: 'Cluster not found' });
+    }
+    res.json({ success: true, message: 'Cluster and associated telemetry deleted' });
   }
-  res.json({ success: true, message: 'Cluster agent disconnected successfully' });
-});
-
-app.delete('/api/v1/clusters/:id', tenantAuth, (req: AuthenticatedRequest, res) => {
-  if (req.userRole !== 'OWNER' && req.userRole !== 'ADMIN') {
-    return res.status(403).json({ error: 'Only OWNER and ADMIN roles can delete clusters' });
-  }
-  const deleted = store.deleteCluster(req.params.id, req.orgId!);
-  if (!deleted) {
-    return res.status(404).json({ error: 'Cluster not found' });
-  }
-  res.json({ success: true, message: 'Cluster and associated telemetry deleted' });
-});
+);
 
 // Get manifests for cluster
-app.get('/api/v1/clusters/:id/manifests', tenantAuth, (req: AuthenticatedRequest, res) => {
+app.get('/api/v1/clusters/:id/manifests', requireUserAuth, requireOrgMembership, (req: AuthenticatedUserRequest, res) => {
   const cluster = store.getCluster(req.params.id, req.orgId!, true);
   if (!cluster) {
     return res.status(404).json({ error: 'Cluster not found' });
@@ -259,7 +273,7 @@ app.get('/api/v1/clusters/:id/manifests', tenantAuth, (req: AuthenticatedRequest
     connectionCode: cluster.connectionCode,
     installKey: cluster.installKey,
     serverUrl,
-    agentVersion: 'sha-fb3a472',
+    agentVersion: 'v1.4.2',
     namespace: 'skyops-system',
     kubectlManifest: manifest,
     helmCommand,
@@ -269,12 +283,11 @@ app.get('/api/v1/clusters/:id/manifests', tenantAuth, (req: AuthenticatedRequest
 });
 
 // Direct raw YAML manifest stream for direct kubectl apply
-app.get('/api/v1/clusters/:id/manifest.yaml', (req, res) => {
+const handleManifestDownload = (req: Request, res: Response) => {
   const { id } = req.params;
   const providedKey = (req.query.key as string) || (req.query.installToken as string) || (req.query.token as string);
   const authHeader = req.headers.authorization;
 
-  // Locate cluster
   const cluster = store.getClusterByIdInternal(id);
   if (!cluster) {
     return res.status(404).type('text/plain').send('# Error 404: Kubernetes cluster not found in SkyOps\n');
@@ -283,7 +296,6 @@ app.get('/api/v1/clusters/:id/manifest.yaml', (req, res) => {
   // Security Verification:
   // 1. Verify if request provides a valid, unexpired short-lived installation key
   // 2. OR verify if request provides valid Agent Bearer Token
-  // 3. OR verify if request is from an authenticated tenant session
   let isAuthorized = false;
 
   if (providedKey && cluster.installKey && cluster.installKey === providedKey) {
@@ -296,9 +308,6 @@ app.get('/api/v1/clusters/:id/manifest.yaml', (req, res) => {
     if (verified && verified.clusterId === id) {
       isAuthorized = true;
     }
-  } else if (req.headers['x-user-email']) {
-    // Authenticated dashboard user previewing manifest
-    isAuthorized = true;
   }
 
   if (!isAuthorized) {
@@ -323,15 +332,18 @@ app.get('/api/v1/clusters/:id/manifest.yaml', (req, res) => {
   res.setHeader('Content-Type', 'text/yaml; charset=utf-8');
   res.setHeader('Content-Disposition', `inline; filename="skyops-agent-${cluster.id}.yaml"`);
   res.status(200).send(manifest);
-});
+};
 
-app.get('/api/v1/clusters/:id/resources', tenantAuth, (req: AuthenticatedRequest, res) => {
+app.get('/api/v1/clusters/:id/manifest.yaml', handleManifestDownload);
+app.get('/api/v1/clusters/:id/manifests/download', handleManifestDownload);
+
+app.get('/api/v1/clusters/:id/resources', requireUserAuth, requireOrgMembership, (req: AuthenticatedUserRequest, res) => {
   const resources = store.getClusterResources(req.params.id, req.orgId!);
   res.json({ resources });
 });
 
-// --- Agent Ingestion Endpoints ---
-app.post('/api/v1/agent/register', agentAuth, (req: AgentRequest, res) => {
+// --- Agent Ingestion Endpoints (Separately Authenticated via requireAgentAuth) ---
+app.post('/api/v1/agent/register', requireAgentAuth, (req: AuthenticatedAgentRequest, res) => {
   const { agentVersion, k8sVersion } = req.body;
   try {
     const result = store.registerAgent(req.clusterId!, agentVersion, k8sVersion);
@@ -341,8 +353,7 @@ app.post('/api/v1/agent/register', agentAuth, (req: AgentRequest, res) => {
   }
 });
 
-// --- Agent Ingestion Endpoints ---
-app.post('/api/v1/agent/heartbeat', agentAuth, (req: AgentRequest, res) => {
+app.post('/api/v1/agent/heartbeat', requireAgentAuth, (req: AuthenticatedAgentRequest, res) => {
   const { agentVersion, k8sVersion, nodeCount, podCount } = req.body;
   const recorded = store.recordAgentHeartbeat(
     req.clusterId!,
@@ -364,13 +375,12 @@ app.post('/api/v1/agent/heartbeat', agentAuth, (req: AgentRequest, res) => {
   });
 });
 
-app.post('/api/v1/agent/telemetry', agentAuth, (req: AgentRequest, res) => {
+app.post('/api/v1/agent/telemetry', requireAgentAuth, (req: AuthenticatedAgentRequest, res) => {
   const { items, resources } = req.body;
 
   if (Array.isArray(resources)) {
     store.syncClusterResources(req.clusterId!, resources as KubernetesResource[]);
   } else if (Array.isArray(items)) {
-    // Process items from queue
     const extractedResources: KubernetesResource[] = [];
     for (const item of items) {
       if (item.payload && item.payload.kind && item.payload.name) {
@@ -390,7 +400,7 @@ app.post('/api/v1/agent/telemetry', agentAuth, (req: AgentRequest, res) => {
 });
 
 // --- Incidents Management ---
-app.get('/api/v1/incidents', tenantAuth, (req: AuthenticatedRequest, res) => {
+app.get('/api/v1/incidents', requireUserAuth, requireOrgMembership, (req: AuthenticatedUserRequest, res) => {
   const { status, severity, clusterId, namespace, search } = req.query;
 
   const incidents = store.getIncidents(req.orgId!, {
@@ -404,7 +414,7 @@ app.get('/api/v1/incidents', tenantAuth, (req: AuthenticatedRequest, res) => {
   res.json({ incidents });
 });
 
-app.get('/api/v1/incidents/:id', tenantAuth, (req: AuthenticatedRequest, res) => {
+app.get('/api/v1/incidents/:id', requireUserAuth, requireOrgMembership, (req: AuthenticatedUserRequest, res) => {
   const incident = store.getIncident(req.params.id, req.orgId!);
   if (!incident) {
     return res.status(404).json({ error: 'Incident not found' });
@@ -416,62 +426,87 @@ app.get('/api/v1/incidents/:id', tenantAuth, (req: AuthenticatedRequest, res) =>
   res.json({ incident, timeline, notes });
 });
 
-app.patch('/api/v1/incidents/:id', tenantAuth, (req: AuthenticatedRequest, res) => {
-  if (req.userRole === 'VIEWER') {
-    return res.status(403).json({ error: 'Read-only VIEWER role cannot modify incident properties' });
-  }
-
-  const { status, severity, title, assignee } = req.body;
-  const updated = store.updateIncident(
-    req.params.id,
-    req.orgId!,
-    { status, severity, title, assignee },
-    { id: req.user!.id, name: req.user!.name }
-  );
-
-  if (!updated) {
-    return res.status(404).json({ error: 'Incident not found' });
-  }
-
-  res.json({ incident: updated });
+const UpdateIncidentSchema = z.object({
+  status: z.enum(['OPEN', 'ACKNOWLEDGED', 'IN_PROGRESS', 'RESOLVED', 'CLOSED']).optional(),
+  severity: z.enum(['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO']).optional(),
+  title: z.string().min(3).max(200).optional(),
+  assignee: z
+    .object({
+      userId: z.string(),
+      name: z.string(),
+      email: z.string()
+    })
+    .optional()
 });
 
-app.get('/api/v1/incidents/:id/timeline', tenantAuth, (req: AuthenticatedRequest, res) => {
+app.patch(
+  '/api/v1/incidents/:id',
+  requireUserAuth,
+  requireOrgMembership,
+  requireRole(['OWNER', 'ADMIN', 'ENGINEER']),
+  (req: AuthenticatedUserRequest, res) => {
+    const parsed = UpdateIncidentSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid incident update payload' });
+    }
+
+    const updated = store.updateIncident(
+      req.params.id,
+      req.orgId!,
+      parsed.data,
+      { id: req.user!.id, name: req.user!.name }
+    );
+
+    if (!updated) {
+      return res.status(404).json({ error: 'Incident not found' });
+    }
+
+    res.json({ incident: updated });
+  }
+);
+
+app.get('/api/v1/incidents/:id/timeline', requireUserAuth, requireOrgMembership, (req: AuthenticatedUserRequest, res) => {
   const timeline = store.getIncidentTimeline(req.params.id, req.orgId!);
   res.json({ timeline });
 });
 
-app.get('/api/v1/incidents/:id/notes', tenantAuth, (req: AuthenticatedRequest, res) => {
+app.get('/api/v1/incidents/:id/notes', requireUserAuth, requireOrgMembership, (req: AuthenticatedUserRequest, res) => {
   const notes = store.getIncidentNotes(req.params.id, req.orgId!);
   res.json({ notes });
 });
 
-app.post('/api/v1/incidents/:id/notes', tenantAuth, (req: AuthenticatedRequest, res) => {
-  if (req.userRole === 'VIEWER') {
-    return res.status(403).json({ error: 'Read-only VIEWER role cannot add investigation notes' });
-  }
-
-  const { content } = req.body;
-  if (!content || typeof content !== 'string' || content.trim().length === 0) {
-    return res.status(400).json({ error: 'Note content cannot be empty' });
-  }
-
-  const note = store.addIncidentNote(
-    req.params.id,
-    req.orgId!,
-    { id: req.user!.id, name: req.user!.name, email: req.user!.email },
-    content
-  );
-
-  if (!note) {
-    return res.status(404).json({ error: 'Incident not found' });
-  }
-
-  res.status(201).json({ note });
+const AddNoteSchema = z.object({
+  content: z.string().min(1, 'Note content cannot be empty').max(3000)
 });
 
+app.post(
+  '/api/v1/incidents/:id/notes',
+  requireUserAuth,
+  requireOrgMembership,
+  requireRole(['OWNER', 'ADMIN', 'ENGINEER']),
+  (req: AuthenticatedUserRequest, res) => {
+    const parsed = AddNoteSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid note content' });
+    }
+
+    const note = store.addIncidentNote(
+      req.params.id,
+      req.orgId!,
+      { id: req.user!.id, name: req.user!.name, email: req.user!.email },
+      parsed.data.content
+    );
+
+    if (!note) {
+      return res.status(404).json({ error: 'Incident not found' });
+    }
+
+    res.status(201).json({ note });
+  }
+);
+
 // --- Overview Dashboard Metrics ---
-app.get('/api/v1/overview', tenantAuth, (req: AuthenticatedRequest, res) => {
+app.get('/api/v1/overview', requireUserAuth, requireOrgMembership, (req: AuthenticatedUserRequest, res) => {
   const metrics = store.getOverviewMetrics(req.orgId!);
   const clusters = store.getClusters(req.orgId!);
   const recentIncidents = store.getIncidents(req.orgId!).slice(0, 8);
@@ -486,7 +521,7 @@ app.get('/api/v1/overview', tenantAuth, (req: AuthenticatedRequest, res) => {
 });
 
 // --- Development & QA Scenario Simulation ---
-app.post('/api/v1/dev/simulate-scenario', tenantAuth, (req: AuthenticatedRequest, res) => {
+app.post('/api/v1/dev/simulate-scenario', requireUserAuth, requireOrgMembership, (req: AuthenticatedUserRequest, res) => {
   const { clusterId, scenario } = req.body;
   if (!clusterId || !scenario) {
     return res.status(400).json({ error: 'clusterId and scenario are required' });
@@ -496,7 +531,7 @@ app.post('/api/v1/dev/simulate-scenario', tenantAuth, (req: AuthenticatedRequest
   res.json(result);
 });
 
-// --- API 404 Handler (ensures no /api/* route falls through to HTML SPA handler) ---
+// --- API 404 Handler ---
 app.all('/api/*', (req, res) => {
   res.status(404).json({ error: `API route not found: ${req.method} ${req.path}` });
 });

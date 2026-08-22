@@ -1,3 +1,4 @@
+import { auth } from '../firebase';
 import {
   AgentManifestsResponse,
   Cluster,
@@ -15,37 +16,36 @@ import {
 } from '../types/index';
 
 class ApiClient {
-  private getHeaders(): HeadersInit {
-    const savedUser = localStorage.getItem('skyops_user');
+  private async getHeaders(): Promise<HeadersInit> {
     const savedOrg = localStorage.getItem('skyops_active_org_id');
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json'
+    };
 
-    let email = 'sre-lead@acme.corp';
-    let name = 'Alex Rivera (Staff SRE)';
+    if (savedOrg) {
+      headers['x-org-id'] = savedOrg;
+    }
 
-    if (savedUser) {
+    // Attach real Firebase ID token
+    if (auth.currentUser) {
       try {
-        const parsed = JSON.parse(savedUser);
-        email = parsed.email || email;
-        name = parsed.name || name;
-      } catch {
-        // use default
+        const idToken = await auth.currentUser.getIdToken();
+        headers['Authorization'] = `Bearer ${idToken}`;
+      } catch (err) {
+        console.warn('Failed to retrieve Firebase ID token:', err);
       }
     }
 
-    return {
-      'Content-Type': 'application/json',
-      'x-user-email': email,
-      'x-user-name': name,
-      'x-org-id': savedOrg || ''
-    };
+    return headers;
   }
 
   /**
-   * Safe centralized request executor that gracefully parses JSON and handles HTML/proxy errors
+   * Safe centralized request executor that gracefully handles Firebase Auth, JSON parsing, and HTTP errors
    */
   private async request<T>(url: string, options: RequestInit = {}): Promise<T> {
+    const dynamicHeaders = await this.getHeaders();
     const headers = {
-      ...this.getHeaders(),
+      ...dynamicHeaders,
       ...(options.headers || {})
     };
 
@@ -53,14 +53,13 @@ class ApiClient {
     try {
       res = await fetch(url, { ...options, headers });
     } catch (netErr: any) {
-      throw new Error(`Network connection error: ${netErr?.message || 'Failed to fetch'}`);
+      throw new Error(`Network connection error: ${netErr?.message || 'Failed to communicate with SkyOps server'}`);
     }
 
     const text = await res.text();
     let data: any;
 
     if (text.trim().startsWith('<') || text.includes('<!DOCTYPE') || text.includes('<!doctype')) {
-      // HTML response received (e.g. 404 from static file server or SPA fallback)
       if (!res.ok) {
         throw new Error(`API error (${res.status} ${res.statusText})`);
       }
@@ -69,7 +68,7 @@ class ApiClient {
 
     try {
       data = text ? JSON.parse(text) : {};
-    } catch (parseErr) {
+    } catch {
       if (!res.ok) {
         throw new Error(`API error (${res.status} ${res.statusText})`);
       }
@@ -109,6 +108,11 @@ class ApiClient {
     return data.organization;
   }
 
+  async getOrgMembers(): Promise<OrgMember[]> {
+    const data = await this.request<{ members: OrgMember[] }>('/api/v1/orgs/members');
+    return data.members;
+  }
+
   // --- Clusters ---
   async getClusters(): Promise<Cluster[]> {
     const data = await this.request<{ clusters: Cluster[] }>('/api/v1/clusters');
@@ -118,11 +122,14 @@ class ApiClient {
   async createCluster(
     name: string,
     description?: string
-  ): Promise<{ cluster: Cluster; token: string; connectionCode?: string }> {
-    return this.request<{ cluster: Cluster; token: string; connectionCode?: string }>('/api/v1/clusters', {
-      method: 'POST',
-      body: JSON.stringify({ name, description })
-    });
+  ): Promise<{ cluster: Cluster; token: string; connectionCode?: string; installKey?: string }> {
+    return this.request<{ cluster: Cluster; token: string; connectionCode?: string; installKey?: string }>(
+      '/api/v1/clusters',
+      {
+        method: 'POST',
+        body: JSON.stringify({ name, description })
+      }
+    );
   }
 
   async connectCluster(clusterId: string, connectionCode: string): Promise<{ success: boolean; cluster: Cluster }> {
@@ -134,8 +141,8 @@ class ApiClient {
 
   async regenerateClusterToken(
     clusterId: string
-  ): Promise<{ success: boolean; cluster: Cluster; token: string; connectionCode: string }> {
-    return this.request<{ success: boolean; cluster: Cluster; token: string; connectionCode: string }>(
+  ): Promise<{ success: boolean; cluster: Cluster; token: string; connectionCode: string; installKey: string }> {
+    return this.request<{ success: boolean; cluster: Cluster; token: string; connectionCode: string; installKey: string }>(
       `/api/v1/clusters/${clusterId}/regenerate-token`,
       { method: 'POST' }
     );
