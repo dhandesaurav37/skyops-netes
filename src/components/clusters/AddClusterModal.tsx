@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 import { api } from '../../api/client';
+import { AGENT_VERSION } from '../../config/version';
 import { AgentManifestsResponse, Cluster } from '../../types/index';
 import { Button, CodeBlock, CopyButton, Modal } from '../common/UI';
 
@@ -462,7 +463,7 @@ export const AddClusterModal: React.FC<AddClusterModalProps> = ({ isOpen, onClos
               </div>
               <div>
                 <div className="text-zinc-500">Agent Version</div>
-                <div className="text-zinc-200 font-semibold">{createdCluster.agentVersion || 'v1.4.2'}</div>
+                <div className="text-zinc-200 font-semibold">{createdCluster.agentVersion || manifestData?.agentVersion || AGENT_VERSION}</div>
               </div>
               <div>
                 <div className="text-zinc-500">Pairing Security</div>

@@ -86,6 +86,32 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
         </div>
       </div>
 
+      {/* Prominent Empty State Banner if NO clusters exist yet */}
+      {clusters.length === 0 && (
+        <div className="p-8 rounded-2xl bg-zinc-900/50 border border-zinc-800/90 text-center space-y-4 shadow-xl">
+          <div className="w-14 h-14 rounded-2xl bg-sky-950/60 border border-sky-800/50 flex items-center justify-center mx-auto text-sky-400">
+            <Server className="w-7 h-7" />
+          </div>
+          <div className="space-y-1.5 max-w-md mx-auto">
+            <h2 className="text-lg font-bold text-zinc-100">No Kubernetes Clusters Connected</h2>
+            <p className="text-xs text-zinc-400 font-mono leading-relaxed">
+              Connect your first cluster to start streaming telemetry and detecting incidents.
+            </p>
+          </div>
+          <div>
+            <Button
+              variant="primary"
+              size="md"
+              onClick={onOpenAddCluster}
+              icon={<Plus className="w-4 h-4" />}
+              className="font-mono text-xs px-6 py-2.5"
+            >
+              Connect Cluster
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Top Metric Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         <div className="p-4 rounded-xl bg-zinc-900/60 border border-zinc-800/80">
@@ -148,8 +174,8 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
           {clusters.length === 0 ? (
             <EmptyState
               title="No Kubernetes clusters connected"
-              description="Deploy the lightweight SkyOps Go agent into your cluster to observe pods, nodes, and workloads in real-time."
-              action={{ label: 'Connect First Cluster', onClick: onOpenAddCluster }}
+              description="Connect your first cluster to start streaming telemetry and detecting incidents."
+              action={{ label: 'Connect Cluster', onClick: onOpenAddCluster }}
             />
           ) : (
             <div className="bg-zinc-900/40 border border-zinc-800/80 rounded-xl overflow-hidden">

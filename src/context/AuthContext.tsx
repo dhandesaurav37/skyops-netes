@@ -23,9 +23,10 @@ interface AuthContextType {
   members: OrgMember[];
   loading: boolean;
   error: string | null;
-  signInWithGoogle: () => Promise<void>;
+  isAuthenticated: boolean;
+  signInWithGoogle: (orgName?: string) => Promise<void>;
   signInWithEmail: (email: string, pass: string) => Promise<void>;
-  signUpWithEmail: (email: string, pass: string, displayName?: string) => Promise<void>;
+  signUpWithEmail: (email: string, pass: string, orgName: string, displayName?: string) => Promise<void>;
   sendPasswordReset: (email: string) => Promise<void>;
   signOut: () => Promise<void>;
   switchOrganization: (orgId: string) => Promise<void>;
@@ -44,7 +45,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [currentOrg, setCurrentOrg] = useState<Organization | null>(null);
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [members, setMembers] = useState<OrgMember[]>([]);
-  const [role, setRole] = useState<Role>('VIEWER');
+  const [role, setRole] = useState<Role>('OWNER');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -83,43 +84,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const refreshSession = async () => {
-    if (!auth.currentUser) {
-      setUser(null);
-      setCurrentOrg(null);
-      setOrganizations([]);
-      setMembers([]);
-      setRole('VIEWER');
-      setLoading(false);
-      return;
-    }
-
     try {
       setError(null);
       const session = await api.getSession();
-      setUser(session.user);
-      setCurrentOrg(session.currentOrg);
-      setOrganizations(session.organizations || []);
-      setMembers(session.members || []);
-      setRole(session.role || 'OWNER');
+      if (session && session.user) {
+        setUser(session.user);
+        setCurrentOrg(session.currentOrg || null);
+        setOrganizations(session.organizations || []);
+        setMembers(session.members || []);
+        setRole(session.role || 'OWNER');
+      }
     } catch (err: any) {
-      console.warn('Session refresh warning:', err?.message || err);
-      // Fallback session state using current Firebase profile
-      const fallbackUser: User = {
-        id: auth.currentUser.uid,
-        email: auth.currentUser.email || `${auth.currentUser.uid}@skyops.internal`,
-        name: auth.currentUser.displayName || auth.currentUser.email?.split('@')[0] || 'SkyOps Engineer'
-      };
-      setUser(fallbackUser);
-      const fallbackOrg: Organization = {
-        id: 'org-primary',
-        name: `${fallbackUser.name.split(' ')[0]}'s Workspace`,
-        slug: 'primary-workspace',
-        createdAt: Date.now(),
-        membersCount: 1
-      };
-      setCurrentOrg(fallbackOrg);
-      setOrganizations([fallbackOrg]);
-      setRole('OWNER');
+      console.warn('Session refresh notice:', err?.message || err);
+      // If unauthorized or network error, keep current state or let onAuthStateChanged manage it
     } finally {
       setLoading(false);
     }
@@ -144,7 +121,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => unsubscribe();
   }, []);
 
-  const signInWithGoogle = async () => {
+  const signInWithGoogle = async (orgName?: string) => {
     try {
       setError(null);
       setLoading(true);
@@ -152,11 +129,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (result.user) {
         await syncUserWithFirestore(result.user);
         await refreshSession();
+
+        if (orgName && orgName.trim()) {
+          try {
+            await createOrganization(orgName.trim());
+          } catch (orgErr) {
+            console.warn('Organization auto-creation notice:', orgErr);
+          }
+        }
       }
     } catch (err: any) {
-      console.error('Google Sign In failed:', err);
-      setError(err.message || 'Failed to sign in with Google');
-      throw err;
+      let friendlyMessage = err.message || 'Failed to sign in with Google';
+      if (err.code === 'auth/unauthorized-domain' || err.message?.includes('unauthorized-domain')) {
+        console.warn('[Firebase Auth] Notice: Domain not in Authorized Domains list yet. Work Email authentication is active.', err?.message);
+        friendlyMessage =
+          'UNAUTHORIZED_DOMAIN: This app domain is not yet authorized in Firebase Console for Google OAuth. Please authorize this domain in Firebase Authentication Settings or sign up/in below using Work Email & Password.';
+      } else if (err.code === 'auth/popup-closed-by-user') {
+        console.info('[Firebase Auth] Popup closed by user.');
+        friendlyMessage = 'Google Sign-In popup was closed before completing authentication.';
+      } else if (err.code === 'auth/popup-blocked') {
+        friendlyMessage = 'Popup was blocked by your browser. Please allow popups or use Email/Password sign-in.';
+      } else {
+        console.error('Google Sign In failed:', err);
+      }
+      setError(friendlyMessage);
+      throw new Error(friendlyMessage);
     } finally {
       setLoading(false);
     }
@@ -173,14 +170,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     } catch (err: any) {
       console.error('Email Sign In failed:', err);
-      setError(err.message || 'Failed to sign in with email');
-      throw err;
+      let friendlyMessage = err.message || 'Failed to sign in with email';
+      if (
+        err.code === 'auth/user-not-found' ||
+        err.code === 'auth/wrong-password' ||
+        err.code === 'auth/invalid-credential'
+      ) {
+        friendlyMessage = 'Invalid email or password. Check your credentials or create a new account.';
+      } else if (err.code === 'auth/invalid-email') {
+        friendlyMessage = 'Please enter a valid email address.';
+      }
+      setError(friendlyMessage);
+      throw new Error(friendlyMessage);
     } finally {
       setLoading(false);
     }
   };
 
-  const signUpWithEmail = async (email: string, pass: string, displayName?: string) => {
+  const signUpWithEmail = async (email: string, pass: string, orgName: string, displayName?: string) => {
     try {
       setError(null);
       setLoading(true);
@@ -194,11 +201,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
         await syncUserWithFirestore(result.user, name);
         await refreshSession();
+
+        // Create the user's initial organization
+        if (orgName && orgName.trim()) {
+          try {
+            await createOrganization(orgName.trim());
+          } catch (orgErr) {
+            console.warn('Initial organization creation notice:', orgErr);
+          }
+        }
       }
     } catch (err: any) {
       console.error('Email Sign Up failed:', err);
-      setError(err.message || 'Failed to create account');
-      throw err;
+      let friendlyMessage = err.message || 'Failed to create account';
+      if (err.code === 'auth/email-already-in-use') {
+        friendlyMessage = 'An account with this email already exists. Please sign in instead.';
+      } else if (err.code === 'auth/weak-password') {
+        friendlyMessage = 'Password is too weak. Please use at least 6 characters.';
+      } else if (err.code === 'auth/invalid-email') {
+        friendlyMessage = 'Please enter a valid email address.';
+      }
+      setError(friendlyMessage);
+      throw new Error(friendlyMessage);
     } finally {
       setLoading(false);
     }
@@ -242,6 +266,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return newOrg;
   };
 
+  const isAuthenticated = !!firebaseUser || !!user;
   const canManageClusters = role === 'OWNER' || role === 'ADMIN';
   const canDeleteClusters = role === 'OWNER' || role === 'ADMIN';
   const canEditIncidents = role === 'OWNER' || role === 'ADMIN' || role === 'ENGINEER';
@@ -257,6 +282,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         members,
         loading,
         error,
+        isAuthenticated,
         signInWithGoogle,
         signInWithEmail,
         signUpWithEmail,

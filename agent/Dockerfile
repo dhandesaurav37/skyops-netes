@@ -1,6 +1,8 @@
 # Stage 1: Build the static Go binary
 FROM golang:1.22-alpine AS builder
 
+ARG VERSION=v1.5.0
+
 WORKDIR /src
 
 # Install CA certificates for secure HTTPS transport
@@ -13,10 +15,10 @@ RUN go mod download
 # Copy agent source code
 COPY . .
 
-# Compile self-contained, statically linked binary for linux/amd64
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+# Compile self-contained, statically linked binary for target architecture
+RUN CGO_ENABLED=0 go build \
     -trimpath \
-    -ldflags="-s -w -X main.Version=v1.4.2" \
+    -ldflags="-s -w -X main.Version=${VERSION}" \
     -o /out/skyops-agent \
     ./cmd/skyops-agent
 

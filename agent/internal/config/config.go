@@ -36,11 +36,16 @@ func LoadFromEnv() (*Config, error) {
 		serverURL = "https://skyops.acme.corp"
 	}
 
+	agentVersion := os.Getenv("SKYOPS_AGENT_VERSION")
+	if agentVersion == "" {
+		agentVersion = "v1.5.0"
+	}
+
 	return &Config{
 		ClusterID:         clusterID,
 		AgentToken:        agentToken,
 		ServerURL:         serverURL,
-		AgentVersion:      "v1.4.2",
+		AgentVersion:      agentVersion,
 		HeartbeatInterval: 30 * time.Second,
 		TelemetryInterval: 15 * time.Second,
 		QueueCapacity:     500,

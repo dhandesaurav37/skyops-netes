@@ -16,6 +16,9 @@ import (
 	"github.com/skyops-io/skyops/agent/internal/transport"
 )
 
+// Version holds the authoritative release version of the agent, injected at build-time via ldflags (-X main.Version=...)
+var Version = "v1.5.0"
+
 func printPairingBanner(connectionCode string) {
 	fmt.Println()
 	fmt.Println("========================================")
@@ -42,7 +45,7 @@ func main() {
 	}))
 	slog.SetDefault(logger)
 
-	slog.Info("Starting SkyOps Kubernetes Agent", "version", "v1.4.2")
+	slog.Info("Starting SkyOps Kubernetes Agent", "version", Version)
 
 	// Load configuration
 	cfg, err := config.LoadFromEnv()
@@ -50,6 +53,11 @@ func main() {
 		slog.Error("Configuration failure", "error", err)
 		fmt.Fprintf(os.Stderr, "FATAL: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Ensure runtime version takes precedence if injected
+	if Version != "" {
+		cfg.AgentVersion = Version
 	}
 
 	slog.Info("Configuration loaded successfully",

@@ -1,4 +1,6 @@
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import {
   AgentStatus,
   Cluster,
@@ -30,12 +32,63 @@ class DataStore {
   private incidentTimeline: Map<string, TimelineEvent[]> = new Map(); // incidentId -> events
   private incidentNotes: Map<string, IncidentNote[]> = new Map(); // incidentId -> notes
   private incidentCounter = 1001;
+  private storagePath = path.join(process.cwd(), 'data', 'skyops_store.json');
+  private saveTimeout: NodeJS.Timeout | null = null;
 
   constructor() {
-    if (process.env.NODE_ENV !== 'production') {
+    this.loadSnapshot();
+    if (this.orgs.size === 0 && process.env.NODE_ENV !== 'production') {
       this.seedDevFixtures();
     }
     this.startHeartbeatMonitor();
+  }
+
+  private loadSnapshot() {
+    try {
+      if (fs.existsSync(this.storagePath)) {
+        const raw = fs.readFileSync(this.storagePath, 'utf8');
+        const data = JSON.parse(raw);
+        if (data.users) this.users = new Map(Object.entries(data.users));
+        if (data.orgs) this.orgs = new Map(Object.entries(data.orgs));
+        if (data.members) this.members = new Map(Object.entries(data.members));
+        if (data.clusters) this.clusters = new Map(Object.entries(data.clusters));
+        if (data.clusterTokens) this.clusterTokens = new Map(Object.entries(data.clusterTokens));
+        if (data.resources) this.resources = new Map(Object.entries(data.resources));
+        if (data.incidents) this.incidents = new Map(Object.entries(data.incidents));
+        if (data.incidentTimeline) this.incidentTimeline = new Map(Object.entries(data.incidentTimeline));
+        if (data.incidentNotes) this.incidentNotes = new Map(Object.entries(data.incidentNotes));
+        if (data.incidentCounter) this.incidentCounter = data.incidentCounter;
+      }
+    } catch (err) {
+      console.warn('[DataStore] Notice: Unable to load store snapshot, starting clean:', err);
+    }
+  }
+
+  public saveSnapshot() {
+    if (this.saveTimeout) clearTimeout(this.saveTimeout);
+    this.saveTimeout = setTimeout(() => {
+      try {
+        const dir = path.dirname(this.storagePath);
+        if (!fs.existsSync(dir)) {
+          fs.mkdirSync(dir, { recursive: true });
+        }
+        const data = {
+          users: Object.fromEntries(this.users),
+          orgs: Object.fromEntries(this.orgs),
+          members: Object.fromEntries(this.members),
+          clusters: Object.fromEntries(this.clusters),
+          clusterTokens: Object.fromEntries(this.clusterTokens),
+          resources: Object.fromEntries(this.resources),
+          incidents: Object.fromEntries(this.incidents),
+          incidentTimeline: Object.fromEntries(this.incidentTimeline),
+          incidentNotes: Object.fromEntries(this.incidentNotes),
+          incidentCounter: this.incidentCounter
+        };
+        fs.writeFileSync(this.storagePath, JSON.stringify(data, null, 2), 'utf8');
+      } catch (err) {
+        console.warn('[DataStore] Snapshot save notice:', err);
+      }
+    }, 100);
   }
 
   /**
@@ -54,6 +107,7 @@ class DataStore {
       membersCount: 3
     };
     this.orgs.set(devOrgId, devOrg);
+    this.saveSnapshot();
   }
 
   // --- Heartbeat & Connection Monitoring ---
@@ -105,6 +159,7 @@ class DataStore {
     if (existing) {
       existing.email = userData.email;
       existing.name = userData.name;
+      this.saveSnapshot();
       return existing;
     }
 
@@ -114,6 +169,7 @@ class DataStore {
       name: userData.name
     };
     this.users.set(newUser.id, newUser);
+    this.saveSnapshot();
     return newUser;
   }
 
@@ -160,6 +216,7 @@ class DataStore {
       }
     ]);
 
+    this.saveSnapshot();
     return org;
   }
 
@@ -251,6 +308,7 @@ class DataStore {
     this.clusters.set(clusterId, cluster);
     this.clusterTokens.set(tokenHash, { clusterId, orgId });
     this.resources.set(clusterId, []);
+    this.saveSnapshot();
 
     return { cluster, rawToken, connectionCode, installKey };
   }
@@ -291,6 +349,7 @@ class DataStore {
     cluster.connectionCodeExpiresAt = undefined;
     cluster.installKey = undefined;
     cluster.installKeyExpiresAt = undefined;
+    this.saveSnapshot();
 
     return cluster;
   }
@@ -332,6 +391,7 @@ class DataStore {
     cluster.agentDetectedAt = undefined;
 
     this.clusterTokens.set(tokenHash, { clusterId, orgId });
+    this.saveSnapshot();
 
     return { cluster, rawToken, connectionCode, installKey };
   }
@@ -351,6 +411,7 @@ class DataStore {
     cluster.status = 'AGENT_OFFLINE';
     cluster.agentStatus = 'OFFLINE';
     cluster.connectionState = 'offline';
+    this.saveSnapshot();
     return true;
   }
 
@@ -377,6 +438,7 @@ class DataStore {
       }
     }
 
+    this.saveSnapshot();
     return true;
   }
 

@@ -4,11 +4,20 @@ replicaCount: 1
 image:
   repository: ghcr.io/dhandesaurav37/skyops-agent
   pullPolicy: IfNotPresent
-  tag: "v1.4.2"
+  # Overrides the image tag whose default is the chart appVersion (v1.5.0)
+  tag: "v1.5.0"
 
+# SkyOps Central Platform Registration Settings
 clusterId: ""
 agentToken: ""
-serverUrl: "https://skyops.acme.corp"
+serverUrl: ""
+
+nameOverride: ""
+fullnameOverride: ""
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
 
 resources:
   limits:
@@ -23,6 +32,15 @@ securityContext:
   allowPrivilegeEscalation: false
   runAsNonRoot: true
   runAsUser: 65532
+  capabilities:
+    drop:
+      - ALL
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
 
 rbac:
   create: true
@@ -30,3 +48,4 @@ rbac:
 serviceAccount:
   create: true
   name: skyops-agent
+  annotations: {}

@@ -1,3 +1,5 @@
+import { AGENT_DEFAULT_NAMESPACE, AGENT_IMAGE_REPOSITORY, AGENT_VERSION } from '../src/config/version';
+
 export interface ManifestConfig {
   clusterId: string;
   clusterName: string;
@@ -8,8 +10,8 @@ export interface ManifestConfig {
 }
 
 export function generateKubernetesManifest(config: ManifestConfig): string {
-  const namespace = config.namespace || 'skyops-system';
-  const agentVersion = config.agentVersion || 'v1.4.2';
+  const namespace = config.namespace || AGENT_DEFAULT_NAMESPACE;
+  const agentVersion = config.agentVersion || AGENT_VERSION;
   const encodedToken = Buffer.from(config.token).toString('base64');
   const encodedServer = Buffer.from(config.serverUrl).toString('base64');
   const encodedClusterId = Buffer.from(config.clusterId).toString('base64');
@@ -126,7 +128,7 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
         - name: skyops-agent
-          image: ghcr.io/dhandesaurav37/skyops-agent:${agentVersion}
+          image: ${AGENT_IMAGE_REPOSITORY}:${agentVersion}
           imagePullPolicy: IfNotPresent
           env:
             - name: SKYOPS_CLUSTER_ID
@@ -167,7 +169,7 @@ spec:
 }
 
 export function generateHelmCommand(config: ManifestConfig): string {
-  const namespace = config.namespace || 'skyops-system';
+  const namespace = config.namespace || AGENT_DEFAULT_NAMESPACE;
   return `helm repo add skyops https://charts.skyops.io
 helm repo update
 helm upgrade --install skyops-agent skyops/skyops-agent \\
@@ -188,9 +190,9 @@ export function generateKubectlCommand(serverUrl: string, clusterId: string, ins
 export function generateHelmValues(config: ManifestConfig): string {
   return `replicaCount: 1
 image:
-  repository: ghcr.io/dhandesaurav37/skyops-agent
+  repository: ${AGENT_IMAGE_REPOSITORY}
   pullPolicy: IfNotPresent
-  tag: "${config.agentVersion || 'v1.4.2'}"
+  tag: "${config.agentVersion || AGENT_VERSION}"
 
 clusterId: "${config.clusterId}"
 agentToken: "${config.token}"

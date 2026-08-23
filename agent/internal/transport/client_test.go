@@ -37,7 +37,7 @@ func TestClient_RegisterAgent(t *testing.T) {
 		ClusterID:         "cls-prod-test",
 		AgentToken:        "secret-token-xyz",
 		ServerURL:         server.URL,
-		AgentVersion:      "v1.4.2",
+		AgentVersion:      "v1.5.0",
 		HeartbeatInterval: 10 * time.Second,
 		MaxRetries:        1,
 		BackoffBase:       10 * time.Millisecond,
@@ -45,7 +45,7 @@ func TestClient_RegisterAgent(t *testing.T) {
 
 	client := transport.NewClient(cfg)
 	res, err := client.RegisterAgent(context.Background(), transport.RegistrationPayload{
-		AgentVersion: "v1.4.2",
+		AgentVersion: "v1.5.0",
 		K8sVersion:   "v1.31.2",
 	})
 
@@ -87,7 +87,7 @@ func TestClient_SendHeartbeat(t *testing.T) {
 		ClusterID:         "cls-prod-test",
 		AgentToken:        "secret-token-xyz",
 		ServerURL:         server.URL,
-		AgentVersion:      "v1.4.2",
+		AgentVersion:      "v1.5.0",
 		HeartbeatInterval: 10 * time.Second,
 		MaxRetries:        1,
 		BackoffBase:       10 * time.Millisecond,
@@ -97,7 +97,7 @@ func TestClient_SendHeartbeat(t *testing.T) {
 
 	payload := transport.HeartbeatPayload{
 		ClusterID:    "cls-prod-test",
-		AgentVersion: "v1.4.2",
+		AgentVersion: "v1.5.0",
 		K8sVersion:   "v1.31.2",
 		NodeCount:    3,
 		PodCount:     24,

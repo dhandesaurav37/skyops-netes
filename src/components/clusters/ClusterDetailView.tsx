@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 import { api } from '../../api/client';
+import { AGENT_DEFAULT_NAMESPACE, AGENT_IMAGE_REPOSITORY, AGENT_VERSION } from '../../config/version';
 import { useAuth } from '../../context/AuthContext';
 import { AgentManifestsResponse, Cluster, KubernetesResource } from '../../types/index';
 import { ClusterStatusBadge, SeverityBadge, StatusBadge } from '../common/Badges';
@@ -396,6 +397,31 @@ export const ClusterDetailView: React.FC<ClusterDetailViewProps> = ({ clusterId,
 
           {manifestData && (
             <div className="space-y-4">
+              <div className="p-3.5 bg-zinc-950 border border-zinc-800 rounded-xl grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono">
+                <div>
+                  <div className="text-zinc-500">Authoritative Version</div>
+                  <div className="text-zinc-200 font-semibold">{manifestData.agentVersion || AGENT_VERSION}</div>
+                </div>
+                <div>
+                  <div className="text-zinc-500">Container Repository</div>
+                  <div className="text-sky-400 font-semibold truncate">{AGENT_IMAGE_REPOSITORY}</div>
+                </div>
+                <div>
+                  <div className="text-zinc-500">Target Namespace</div>
+                  <div className="text-zinc-200 font-semibold">{manifestData.namespace || AGENT_DEFAULT_NAMESPACE}</div>
+                </div>
+                <div>
+                  <div className="text-zinc-500">Agent Handshake</div>
+                  <div className="text-zinc-200 font-semibold">
+                    {cluster.connectionState === 'connected' ? (
+                      <span className="text-emerald-400">Connected & Verified</span>
+                    ) : (
+                      <span className="text-amber-400">Pending Verification</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
               {manifestData.installCommand && (
                 <CodeBlock
                   code={manifestData.installCommand}

@@ -95,7 +95,7 @@ metadata:
   namespace: skyops-system
   labels:
     app.kubernetes.io/name: skyops-agent
-    app.kubernetes.io/version: "v1.4.2"
+    app.kubernetes.io/version: "v1.5.0"
 spec:
   replicas: 1
   selector:
@@ -110,7 +110,7 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
         - name: skyops-agent
-          image: ghcr.io/dhandesaurav37/skyops-agent:v1.4.2
+          image: ghcr.io/dhandesaurav37/skyops-agent:v1.5.0
           imagePullPolicy: IfNotPresent
           env:
             - name: SKYOPS_CLUSTER_ID

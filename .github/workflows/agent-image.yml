@@ -17,9 +17,9 @@ on:
   workflow_dispatch:
     inputs:
       version_tag:
-        description: 'Optional custom version tag to apply (e.g. v1.4.2)'
+        description: 'Optional custom version tag to apply (defaults to agent/VERSION if omitted)'
         required: false
-        default: 'v1.4.2'
+        default: ''
 
 permissions:
   contents: read
@@ -52,7 +52,8 @@ jobs:
 
       - name: Verify Go build
         run: |
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -v -trimpath -ldflags="-s -w" -o /tmp/skyops-agent ./cmd/skyops-agent
+          VERSION=$(cat VERSION 2>/dev/null || echo "v1.5.0")
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -v -trimpath -ldflags="-s -w -X main.Version=${VERSION}" -o /tmp/skyops-agent ./cmd/skyops-agent
 
   build-and-push:
     name: Build & Publish Container Image
@@ -61,6 +62,22 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Determine Agent Version
+        id: get_version
+        run: |
+          if [ -n "${{ github.event.inputs.version_tag }}" ]; then
+            VERSION="${{ github.event.inputs.version_tag }}"
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/}"
+          elif [ -f agent/VERSION ]; then
+            VERSION=$(cat agent/VERSION | tr -d '[:space:]')
+          else
+            VERSION="v1.5.0"
+          fi
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Building SkyOps Agent version: ${VERSION}"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -84,13 +101,11 @@ jobs:
           tags: |
             # Tag with Git Commit SHA
             type=sha,format=short,prefix=sha-
-            # Tag with SemVer on tag pushes (v1.4.2, v1.4.3, v2.0.0, etc.)
+            # Tag with SemVer on tag pushes
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            # Tag manual input if specified
-            type=raw,value=${{ github.event.inputs.version_tag }},enable=${{ github.event.inputs.version_tag != '' }}
-            # Default v1.4.2 release tag on main branch push
-            type=raw,value=v1.4.2,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' }}
+            # Tag with authoritative agent version
+            type=raw,value=${{ steps.get_version.outputs.version }}
             # Latest tag for main branch
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' }}
 
@@ -99,6 +114,8 @@ jobs:
         with:
           context: ./agent
           file: ./agent/Dockerfile
+          build-args: |
+            VERSION=${{ steps.get_version.outputs.version }}
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}

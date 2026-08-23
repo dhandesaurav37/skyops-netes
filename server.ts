@@ -14,6 +14,7 @@ import {
 } from './server/auth';
 import { generateHelmCommand, generateKubernetesManifest } from './server/manifestGenerator';
 import { store } from './server/store';
+import { AGENT_DEFAULT_NAMESPACE, AGENT_VERSION } from './src/config/version';
 import { KubernetesResource } from './src/types/index';
 
 dotenv.config();
@@ -54,6 +55,13 @@ app.use((req, res, next) => {
 // Helper to resolve public API / SaaS endpoint URL for remote Kubernetes agents
 function getPublicServerUrl(req?: Request): string {
   if (
+    process.env.SKYOPS_SERVER_URL &&
+    process.env.SKYOPS_SERVER_URL.startsWith('http') &&
+    !process.env.SKYOPS_SERVER_URL.includes('localhost')
+  ) {
+    return process.env.SKYOPS_SERVER_URL.replace(/\/+$/, '');
+  }
+  if (
     process.env.SKYOPS_API_URL &&
     process.env.SKYOPS_API_URL.startsWith('http') &&
     !process.env.SKYOPS_API_URL.includes('localhost') &&
@@ -71,7 +79,7 @@ function getPublicServerUrl(req?: Request): string {
       return `${forwardedProto}://${forwardedHost}`.replace(/\/+$/, '');
     }
   }
-  return process.env.APP_URL || 'https://ais-dev-jrvfxsw2z3hsomufnmypgw-811563557432.asia-southeast1.run.app';
+  return process.env.APP_URL || 'https://ais-dev-ippvl3vbmeyhxnyp4m36nk-811563557432.asia-southeast1.run.app';
 }
 
 // ==========================================
@@ -83,7 +91,7 @@ app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
     service: 'SkyOps Central Ingestion API',
-    version: 'v1.4.2',
+    version: AGENT_VERSION,
     timestamp: Date.now()
   });
 });
@@ -273,8 +281,8 @@ app.get('/api/v1/clusters/:id/manifests', requireUserAuth, requireOrgMembership,
     connectionCode: cluster.connectionCode,
     installKey: cluster.installKey,
     serverUrl,
-    agentVersion: 'v1.4.2',
-    namespace: 'skyops-system',
+    agentVersion: AGENT_VERSION,
+    namespace: AGENT_DEFAULT_NAMESPACE,
     kubectlManifest: manifest,
     helmCommand,
     installCommand,
@@ -357,7 +365,7 @@ app.post('/api/v1/agent/heartbeat', requireAgentAuth, (req: AuthenticatedAgentRe
   const { agentVersion, k8sVersion, nodeCount, podCount } = req.body;
   const recorded = store.recordAgentHeartbeat(
     req.clusterId!,
-    agentVersion || 'v1.4.2',
+    agentVersion || AGENT_VERSION,
     k8sVersion,
     nodeCount,
     podCount

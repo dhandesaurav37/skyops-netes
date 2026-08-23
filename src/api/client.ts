@@ -26,13 +26,18 @@ class ApiClient {
       headers['x-org-id'] = savedOrg;
     }
 
-    // Attach real Firebase ID token
+    // Attach real Firebase ID token or demo token
     if (auth.currentUser) {
       try {
         const idToken = await auth.currentUser.getIdToken();
         headers['Authorization'] = `Bearer ${idToken}`;
       } catch (err) {
         console.warn('Failed to retrieve Firebase ID token:', err);
+      }
+    } else {
+      const demoToken = localStorage.getItem('skyops_demo_token');
+      if (demoToken) {
+        headers['Authorization'] = `Bearer ${demoToken}`;
       }
     }
 

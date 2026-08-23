@@ -12,12 +12,20 @@ import { OverviewView } from '../overview/OverviewView';
 import { SettingsView } from '../settings/SettingsView';
 import { NavigationTab, Sidebar } from './Sidebar';
 
-export const AppShell: React.FC = () => {
+interface AppShellProps {
+  initialOpenAddCluster?: boolean;
+  onSignOut?: () => void;
+}
+
+export const AppShell: React.FC<AppShellProps> = ({
+  initialOpenAddCluster = false,
+  onSignOut
+}) => {
   const { currentOrg } = useAuth();
   const [activeTab, setActiveTab] = useState<NavigationTab>('overview');
   const [selectedClusterId, setSelectedClusterId] = useState<string | null>(null);
   const [selectedIncidentId, setSelectedIncidentId] = useState<string | null>(null);
-  const [isAddClusterOpen, setIsAddClusterOpen] = useState(false);
+  const [isAddClusterOpen, setIsAddClusterOpen] = useState(initialOpenAddCluster);
 
   // Global state
   const defaultMetrics: OverviewMetrics = {
@@ -99,7 +107,9 @@ export const AppShell: React.FC = () => {
     setSelectedIncidentId(null);
   };
 
-  const openIncidentsCount = incidents.filter((i) => i.status === 'OPEN' || i.status === 'IN_PROGRESS' || i.status === 'ACKNOWLEDGED').length;
+  const openIncidentsCount = incidents.filter(
+    (i) => i.status === 'OPEN' || i.status === 'IN_PROGRESS' || i.status === 'ACKNOWLEDGED'
+  ).length;
 
   return (
     <div className="flex h-screen bg-zinc-950 text-zinc-100 antialiased overflow-hidden font-sans">
@@ -109,6 +119,7 @@ export const AppShell: React.FC = () => {
         onSelectTab={handleTabChange}
         openIncidentsCount={openIncidentsCount}
         onOpenAddCluster={() => setIsAddClusterOpen(true)}
+        onSignOut={onSignOut}
       />
 
       {/* Main Content Area */}
@@ -122,12 +133,19 @@ export const AppShell: React.FC = () => {
             </span>
             <span className="text-zinc-700">|</span>
             <span>
-              Tenant: <strong className="text-sky-400">{currentOrg?.name || 'Production'}</strong>
+              Tenant: <strong className="text-sky-400">{currentOrg?.name || 'Workspace'}</strong>
             </span>
           </div>
 
           <div className="flex items-center gap-3 text-xs font-mono text-zinc-400">
-            <span>SkyOps Agent Version: <strong className="text-zinc-200">v1.4.2</strong></span>
+            <span className="text-emerald-400 flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              Autonomous Engine Active
+            </span>
+            <span className="text-zinc-700">|</span>
+            <span>
+              SkyOps Agent Version: <strong className="text-zinc-200">v1.4.2</strong>
+            </span>
           </div>
         </header>
 
