@@ -511,8 +511,25 @@ class DataStore {
     cluster.connectedAt = cluster.connectedAt || now;
     if (agentVersion) cluster.agentVersion = agentVersion;
     if (k8sVersion) cluster.k8sVersion = k8sVersion;
-    if (typeof nodeCount === 'number') cluster.nodeCount = nodeCount;
-    if (typeof podCount === 'number') cluster.podCount = podCount;
+    if (typeof nodeCount === 'number' && nodeCount > 0) {
+      cluster.nodeCount = nodeCount;
+    } else {
+      const existingResources = this.resources.get(clusterId) || [];
+      const calculatedNodes = existingResources.filter((r) => r.kind === 'Node').length;
+      if (calculatedNodes > 0 || cluster.nodeCount === undefined) {
+        cluster.nodeCount = calculatedNodes;
+      }
+    }
+
+    if (typeof podCount === 'number' && podCount > 0) {
+      cluster.podCount = podCount;
+    } else {
+      const existingResources = this.resources.get(clusterId) || [];
+      const calculatedPods = existingResources.filter((r) => r.kind === 'Pod').length;
+      if (calculatedPods > 0 || cluster.podCount === undefined) {
+        cluster.podCount = calculatedPods;
+      }
+    }
 
     cluster.agentStatus = 'CONNECTED';
     cluster.connectionState = 'connected';
@@ -550,6 +567,8 @@ class DataStore {
     for (const res of incomingResources) {
       this.evaluateResourceObservation(cluster.orgId, clusterId, cluster.name, res);
     }
+
+    this.saveSnapshot();
   }
 
   public getClusterResources(clusterId: string, orgId: string): KubernetesResource[] {
