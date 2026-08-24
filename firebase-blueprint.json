@@ -14,36 +14,38 @@
           "format": "email",
           "description": "Corporate user email"
         },
-        "name": {
+        "fullName": {
           "type": "string",
-          "description": "Full name or persona title"
+          "description": "Full name of the user"
         },
-        "photoURL": {
+        "organisationName": {
           "type": "string",
-          "description": "Optional user avatar URL"
+          "description": "Primary or initial organization name"
         },
-        "isAnonymous": {
-          "type": "boolean",
-          "description": "Whether the user authenticated as a guest/anonymous"
+        "role": {
+          "type": "string",
+          "enum": ["OWNER", "ADMIN", "ENGINEER", "VIEWER"],
+          "description": "SkyOps RBAC role"
         },
         "createdAt": {
           "type": "string",
           "format": "date-time",
           "description": "Creation timestamp"
         },
-        "lastLoginAt": {
+        "updatedAt": {
           "type": "string",
           "format": "date-time",
-          "description": "Last login timestamp"
+          "description": "Last update timestamp"
         }
       },
-      "required": ["uid", "email", "name"]
+      "required": ["uid", "email", "fullName", "role"]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": "User",
-      "description": "User profile collection indexed by Firebase UID"
+      "description": "User profile collection indexed by Firebase Auth UID"
     }
   }
 }
+

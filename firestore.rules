@@ -1,51 +1,44 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // User profile documents - isolated to user's own UID
-    match /users/{userId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null && (request.auth.uid == userId || request.auth.token.firebase.sign_in_provider == 'anonymous');
-    }
 
-    // Organizations and nested tenant resources
-    match /organizations/{orgId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null;
-
-      // Organization members
-      match /members/{memberId} {
-        allow read: if request.auth != null;
-        allow write: if request.auth != null;
-      }
-
-      // Clusters belonging to organization
-      match /clusters/{clusterId} {
-        allow read: if request.auth != null;
-        allow write: if request.auth != null;
-      }
-
-      // Incidents belonging to organization
-      match /incidents/{incidentId} {
-        allow read: if request.auth != null;
-        allow write: if request.auth != null;
-
-        // Incident timeline events and notes
-        match /timeline/{eventId} {
-          allow read: if request.auth != null;
-          allow write: if request.auth != null;
-        }
-
-        match /notes/{noteId} {
-          allow read: if request.auth != null;
-          allow write: if request.auth != null;
-        }
-      }
-    }
-
-    // Default rule for other authenticated collections
+    // Global Default Deny
     match /{document=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if false;
+    }
+
+    // Global Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidUserDoc(data, userId) {
+      return data.uid is string &&
+        data.uid == userId &&
+        data.email is string &&
+        data.email.size() > 0 &&
+        data.email.size() <= 320 &&
+        (!('fullName' in data) || (data.fullName is string && data.fullName.size() <= 150)) &&
+        (!('organisationName' in data) || (data.organisationName is string && data.organisationName.size() <= 150)) &&
+        (!('role' in data) || (data.role in ['OWNER', 'ADMIN', 'ENGINEER', 'VIEWER']));
+    }
+
+    // User profiles - strictly restricted to each user's own UID
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidId(userId) && isValidUserDoc(request.resource.data, userId);
+      allow update: if isOwner(userId) && isValidId(userId) && isValidUserDoc(request.resource.data, userId);
+      allow delete: if false;
     }
   }
 }
+

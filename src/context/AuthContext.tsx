@@ -49,37 +49,64 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const syncUserWithFirestore = async (fbUser: FirebaseUser, displayName?: string) => {
+  const syncUserWithFirestore = async (
+    fbUser: FirebaseUser,
+    options?: {
+      displayName?: string;
+      organisationName?: string;
+      role?: Role;
+    }
+  ) => {
     try {
       const userRef = doc(db, 'users', fbUser.uid);
       const snap = await getDoc(userRef);
-      const name = displayName || fbUser.displayName || fbUser.email?.split('@')[0] || 'SkyOps Engineer';
       const email = fbUser.email || `${fbUser.uid}@skyops.internal`;
+      const fullName =
+        options?.displayName ||
+        fbUser.displayName ||
+        email.split('@')[0] ||
+        'SkyOps Engineer';
+      const organisationName =
+        options?.organisationName ||
+        `${fullName}'s Team`;
+      const role: Role = options?.role || 'OWNER';
 
       if (!snap.exists()) {
         await setDoc(
           userRef,
           {
             uid: fbUser.uid,
+            organisationName,
+            fullName,
             email,
-            name,
-            photoURL: fbUser.photoURL || null,
+            role,
             createdAt: serverTimestamp(),
-            lastLoginAt: serverTimestamp()
-          },
-          { merge: true }
+            updatedAt: serverTimestamp()
+          }
         );
       } else {
-        await setDoc(
-          userRef,
-          {
-            lastLoginAt: serverTimestamp()
-          },
-          { merge: true }
-        );
+        const existingData = snap.data();
+        const updates: Record<string, any> = {
+          updatedAt: serverTimestamp()
+        };
+
+        if (!existingData.fullName && fullName) {
+          updates.fullName = fullName;
+        }
+        if (!existingData.email && email) {
+          updates.email = email;
+        }
+        if (!existingData.organisationName && organisationName) {
+          updates.organisationName = organisationName;
+        }
+        if (!existingData.role) {
+          updates.role = role;
+        }
+
+        await setDoc(userRef, updates, { merge: true });
       }
-    } catch (err) {
-      console.warn('Firestore user profile sync warning (non-blocking):', err);
+    } catch (err: any) {
+      console.warn('[SkyOps Auth] Firestore user profile sync notice:', err?.message || err);
     }
   };
 
@@ -127,7 +154,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setLoading(true);
       const result = await signInWithPopup(auth, googleProvider);
       if (result.user) {
-        await syncUserWithFirestore(result.user);
+        await syncUserWithFirestore(result.user, {
+          displayName: result.user.displayName || undefined,
+          organisationName: orgName?.trim() || undefined,
+          role: 'OWNER'
+        });
         await refreshSession();
 
         if (orgName && orgName.trim()) {
@@ -199,7 +230,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } catch {
           // ignore non-fatal profile update error
         }
-        await syncUserWithFirestore(result.user, name);
+        await syncUserWithFirestore(result.user, {
+          displayName: name,
+          organisationName: orgName.trim(),
+          role: 'OWNER'
+        });
         await refreshSession();
 
         // Create the user's initial organization
