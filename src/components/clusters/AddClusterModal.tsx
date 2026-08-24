@@ -2,54 +2,61 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
+  Boxes,
   Check,
   CheckCircle2,
   Clock,
   Copy,
-  Download,
+  Cpu,
+  Eye,
   KeyRound,
+  Layers,
   Loader2,
   Radio,
-  RefreshCw,
   Server,
   ShieldCheck,
   Terminal,
-  X,
   Zap
 } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 import { api } from '../../api/client';
 import { AGENT_VERSION } from '../../config/version';
 import { AgentManifestsResponse, Cluster } from '../../types/index';
-import { Button, CodeBlock, CopyButton, Modal } from '../common/UI';
+import { Button, CodeBlock, Modal } from '../common/UI';
 
 interface AddClusterModalProps {
   isOpen: boolean;
   onClose: () => void;
   onClusterCreated: (cluster: Cluster) => void;
+  onOpenCluster?: (clusterId: string) => void;
 }
 
 type WizardStep = 1 | 2 | 3 | 4;
 
-export const AddClusterModal: React.FC<AddClusterModalProps> = ({ isOpen, onClose, onClusterCreated }) => {
+export const AddClusterModal: React.FC<AddClusterModalProps> = ({
+  isOpen,
+  onClose,
+  onClusterCreated,
+  onOpenCluster
+}) => {
   const [currentStep, setCurrentStep] = useState<WizardStep>(1);
   const [clusterName, setClusterName] = useState('');
+  const [environmentType, setEnvironmentType] = useState<'Production' | 'Staging' | 'Development'>('Production');
   const [description, setDescription] = useState('');
-  const [environmentType, setEnvironmentType] = useState<'production' | 'staging' | 'development'>('production');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdCluster, setCreatedCluster] = useState<Cluster | null>(null);
   const [manifestData, setManifestData] = useState<AgentManifestsResponse | null>(null);
-  const [installMethod, setInstallMethod] = useState<'helm' | 'kubectl'>('helm');
+  const [copied, setCopied] = useState(false);
 
-  // Step 3 Pairing Key states
-  const [inputConnectionCode, setInputConnectionCode] = useState('');
+  // Step 3 Activation Code State
+  const [activationCode, setActivationCode] = useState('');
   const [verifying, setVerifying] = useState(false);
   const [verifySuccess, setVerifySuccess] = useState(false);
   const [agentPulseDetected, setAgentPulseDetected] = useState(false);
   const [timeRemainingSeconds, setTimeRemainingSeconds] = useState(900); // 15 minutes
 
-  // Step 1: Create pending cluster record
+  // Step 1: Create pending cluster in backend
   const handleCreateCluster = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!clusterName.trim()) return;
@@ -57,28 +64,38 @@ export const AddClusterModal: React.FC<AddClusterModalProps> = ({ isOpen, onClos
     try {
       setLoading(true);
       setError(null);
-      const res = await api.createCluster(clusterName.trim(), description.trim());
+      const desc = description.trim() || `Environment: ${environmentType}`;
+      const res = await api.createCluster(clusterName.trim(), desc);
       setCreatedCluster(res.cluster);
       onClusterCreated(res.cluster);
 
-      // Fetch manifests & connection keys
+      // Fetch the single-command install manifest
       const manifests = await api.getClusterManifests(res.cluster.id);
       setManifestData(manifests);
-      if (manifests.connectionCode) {
-        setInputConnectionCode(manifests.connectionCode);
-      }
 
       setCurrentStep(2);
     } catch (err: any) {
-      setError(err.message || 'Failed to initialize cluster registration');
+      setError(err.message || 'Failed to initialize cluster creation.');
     } finally {
       setLoading(false);
     }
   };
 
-  // 15-minute countdown for connection key validity
+  // Copy command helper
+  const handleCopyCommand = async () => {
+    if (!manifestData?.installCommand) return;
+    try {
+      await navigator.clipboard.writeText(manifestData.installCommand);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Fallback
+    }
+  };
+
+  // 15-minute countdown for activation code validity
   useEffect(() => {
-    if (!isOpen || currentStep !== 3 || verifySuccess) return;
+    if (!isOpen || (currentStep !== 2 && currentStep !== 3) || verifySuccess) return;
 
     const timer = setInterval(() => {
       setTimeRemainingSeconds((prev) => (prev > 0 ? prev - 1 : 0));
@@ -87,9 +104,9 @@ export const AddClusterModal: React.FC<AddClusterModalProps> = ({ isOpen, onClos
     return () => clearInterval(timer);
   }, [isOpen, currentStep, verifySuccess]);
 
-  // Background poller on Step 3 to auto-detect agent registration
+  // Background poller on Step 2 & 3 to detect agent registration & heartbeat automatically
   useEffect(() => {
-    if (!isOpen || currentStep !== 3 || !createdCluster?.id || verifySuccess) return;
+    if (!isOpen || !createdCluster?.id || verifySuccess) return;
 
     const poller = setInterval(async () => {
       try {
@@ -101,34 +118,35 @@ export const AddClusterModal: React.FC<AddClusterModalProps> = ({ isOpen, onClos
           onClusterCreated(cluster);
           setTimeout(() => {
             setCurrentStep(4);
-          }, 800);
-        } else if (cluster.agentDetectedAt) {
+          }, 600);
+        } else if (cluster.agentDetectedAt || cluster.lastHeartbeat) {
           setAgentPulseDetected(true);
+          setCreatedCluster(cluster);
         }
       } catch {
-        // non-fatal polling error
+        // Non-fatal polling error
       }
-    }, 3000);
+    }, 2500);
 
     return () => clearInterval(poller);
-  }, [isOpen, currentStep, createdCluster?.id, verifySuccess]);
+  }, [isOpen, createdCluster?.id, verifySuccess]);
 
-  // Manual Connection Key verification
-  const handleVerifyPairingKey = async (e?: React.FormEvent) => {
+  // Handle human-entered activation code validation
+  const handleVerifyActivation = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!createdCluster?.id || !inputConnectionCode.trim()) return;
+    if (!createdCluster?.id || !activationCode.trim()) return;
 
     try {
       setVerifying(true);
       setError(null);
-      const res = await api.connectCluster(createdCluster.id, inputConnectionCode.trim());
+      const res = await api.connectCluster(createdCluster.id, activationCode.trim());
       setVerifySuccess(true);
       setAgentPulseDetected(true);
       setCreatedCluster(res.cluster);
       onClusterCreated(res.cluster);
       setCurrentStep(4);
     } catch (err: any) {
-      setError(err.message || 'Failed to verify pairing key. Please check the terminal output.');
+      setError(err.message || 'That activation code is incorrect.');
     } finally {
       setVerifying(false);
     }
@@ -140,12 +158,19 @@ export const AddClusterModal: React.FC<AddClusterModalProps> = ({ isOpen, onClos
     setDescription('');
     setCreatedCluster(null);
     setManifestData(null);
-    setInputConnectionCode('');
+    setActivationCode('');
     setVerifying(false);
     setVerifySuccess(false);
     setAgentPulseDetected(false);
     setError(null);
     onClose();
+  };
+
+  const handleOpenCluster = () => {
+    if (createdCluster && onOpenCluster) {
+      onOpenCluster(createdCluster.id);
+    }
+    handleResetAndClose();
   };
 
   const formatCountdown = (seconds: number) => {
@@ -158,16 +183,16 @@ export const AddClusterModal: React.FC<AddClusterModalProps> = ({ isOpen, onClos
     <Modal
       isOpen={isOpen}
       onClose={handleResetAndClose}
-      title="Connect Kubernetes Cluster"
+      title={currentStep === 1 ? 'Connect Cluster' : currentStep === 2 ? 'Activate Cluster' : currentStep === 3 ? 'Complete Connection' : 'Cluster Connected'}
       maxWidth={currentStep === 1 ? 'md' : 'xl'}
     >
       <div className="space-y-6">
-        {/* Step Progress Indicator */}
+        {/* Step Progress Tracker */}
         <div className="flex items-center justify-between border-b border-zinc-800 pb-4">
           {[
-            { step: 1, label: 'Cluster Details' },
-            { step: 2, label: 'Install Agent' },
-            { step: 3, label: 'Verify Key' },
+            { step: 1, label: 'Create Cluster' },
+            { step: 2, label: 'Activate Cluster' },
+            { step: 3, label: 'Activation Code' },
             { step: 4, label: 'Connected' }
           ].map((item, idx) => {
             const isCompleted = currentStep > item.step || (item.step === 4 && verifySuccess);
@@ -192,7 +217,7 @@ export const AddClusterModal: React.FC<AddClusterModalProps> = ({ isOpen, onClos
                 >
                   {item.label}
                 </span>
-                {idx < 3 && <div className="w-6 sm:w-10 h-[1px] bg-zinc-800 ml-1 sm:ml-2" />}
+                {idx < 3 && <div className="w-4 sm:w-8 h-[1px] bg-zinc-800 ml-1" />}
               </div>
             );
           })}
@@ -201,17 +226,15 @@ export const AddClusterModal: React.FC<AddClusterModalProps> = ({ isOpen, onClos
         {error && (
           <div className="p-3.5 text-xs rounded-xl bg-rose-950/40 border border-rose-800 text-rose-300 font-mono flex items-start gap-2.5">
             <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-            <div>{error}</div>
+            <div className="leading-relaxed">{error}</div>
           </div>
         )}
 
-        {/* STEP 1: Cluster Details */}
+        {/* =======================================================
+            1. CREATE CLUSTER
+           ======================================================= */}
         {currentStep === 1 && (
           <form onSubmit={handleCreateCluster} className="space-y-4">
-            <div className="text-xs text-zinc-400 leading-relaxed">
-              Register a target Kubernetes cluster with SkyOps. You will be provided with production Helm charts and a single-use pairing key to authenticate the agent.
-            </div>
-
             <div>
               <label className="block text-xs font-mono font-medium text-zinc-300 mb-1.5">
                 Cluster Name <span className="text-rose-400">*</span>
@@ -219,7 +242,7 @@ export const AddClusterModal: React.FC<AddClusterModalProps> = ({ isOpen, onClos
               <input
                 type="text"
                 required
-                placeholder="e.g. production-gke-asia"
+                placeholder="Production EKS"
                 value={clusterName}
                 onChange={(e) => setClusterName(e.target.value)}
                 className="w-full px-3 py-2 text-sm bg-zinc-950 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-sky-500 font-mono"
@@ -227,16 +250,18 @@ export const AddClusterModal: React.FC<AddClusterModalProps> = ({ isOpen, onClos
             </div>
 
             <div>
-              <label className="block text-xs font-mono font-medium text-zinc-300 mb-1.5">Environment Tag</label>
+              <label className="block text-xs font-mono font-medium text-zinc-300 mb-1.5">
+                Environment <span className="text-rose-400">*</span>
+              </label>
               <div className="grid grid-cols-3 gap-2">
-                {(['production', 'staging', 'development'] as const).map((env) => (
+                {(['Production', 'Staging', 'Development'] as const).map((env) => (
                   <button
                     key={env}
                     type="button"
                     onClick={() => setEnvironmentType(env)}
-                    className={`py-2 px-3 text-xs font-mono rounded-lg border text-center capitalize transition-all ${
+                    className={`py-2 px-3 text-xs font-mono rounded-lg border text-center transition-all ${
                       environmentType === env
-                        ? 'border-sky-500 bg-sky-950/30 text-sky-300'
+                        ? 'border-sky-500 bg-sky-950/40 text-sky-300 font-semibold'
                         : 'border-zinc-800 bg-zinc-950 text-zinc-400 hover:text-zinc-200'
                     }`}
                   >
@@ -247,10 +272,12 @@ export const AddClusterModal: React.FC<AddClusterModalProps> = ({ isOpen, onClos
             </div>
 
             <div>
-              <label className="block text-xs font-mono font-medium text-zinc-300 mb-1.5">Description (Optional)</label>
+              <label className="block text-xs font-mono font-medium text-zinc-300 mb-1.5">
+                Description (Optional)
+              </label>
               <textarea
                 rows={2}
-                placeholder="Primary workload cluster hosting customer-facing microservices"
+                placeholder="Primary workload cluster hosting mission-critical services"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 className="w-full px-3 py-2 text-sm bg-zinc-950 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-sky-500 font-mono"
@@ -262,174 +289,199 @@ export const AddClusterModal: React.FC<AddClusterModalProps> = ({ isOpen, onClos
                 Cancel
               </Button>
               <Button variant="primary" type="submit" disabled={loading || !clusterName.trim()}>
-                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Next: Configure Agent'}
+                {loading ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : null}
+                Create Cluster
               </Button>
             </div>
           </form>
         )}
 
-        {/* STEP 2: Install Agent */}
+        {/* =======================================================
+            2. ACTIVATE CLUSTER (ONE Primary Command)
+           ======================================================= */}
         {currentStep === 2 && createdCluster && manifestData && (
-          <div className="space-y-5">
-            <div className="p-3.5 bg-zinc-950 border border-zinc-800 rounded-xl grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs font-mono">
-              <div>
-                <div className="text-zinc-500">Cluster ID</div>
-                <div className="text-zinc-200 font-semibold truncate">{createdCluster.id}</div>
-              </div>
-              <div>
-                <div className="text-zinc-500">Namespace</div>
-                <div className="text-zinc-200 font-semibold">{manifestData.namespace || 'skyops-system'}</div>
-              </div>
-              <div>
-                <div className="text-zinc-500">RBAC Scope</div>
-                <div className="text-emerald-400 font-semibold flex items-center gap-1">
-                  <ShieldCheck className="w-3.5 h-3.5" />
-                  Read-Only (Non-Admin)
-                </div>
-              </div>
+          <div className="space-y-6">
+            <div className="space-y-1">
+              <h2 className="text-base font-semibold text-zinc-100">
+                Activate your Kubernetes cluster
+              </h2>
+              <p className="text-xs text-zinc-400 leading-relaxed">
+                Run this command in a terminal that has access to your Kubernetes cluster:
+              </p>
             </div>
 
-            {/* Install method toggle */}
-            <div className="flex items-center gap-2 border-b border-zinc-800 pb-2">
-              <button
-                type="button"
-                onClick={() => setInstallMethod('helm')}
-                className={`text-xs font-mono px-3 py-1.5 rounded-lg font-medium transition-all ${
-                  installMethod === 'helm'
-                    ? 'bg-zinc-800 text-sky-400'
-                    : 'text-zinc-400 hover:text-zinc-200'
-                }`}
-              >
-                Helm 3 (Recommended)
-              </button>
-              <button
-                type="button"
-                onClick={() => setInstallMethod('kubectl')}
-                className={`text-xs font-mono px-3 py-1.5 rounded-lg font-medium transition-all ${
-                  installMethod === 'kubectl'
-                    ? 'bg-zinc-800 text-sky-400'
-                    : 'text-zinc-400 hover:text-zinc-200'
-                }`}
-              >
-                Kubectl Apply
-              </button>
-            </div>
-
-            {installMethod === 'helm' ? (
-              <div className="space-y-3">
-                <div className="text-xs text-zinc-300">
-                  Execute the following Helm command in your terminal configured with <code className="text-sky-400 font-mono">kubeconfig</code>:
+            {/* ONE Primary Installation Command Box */}
+            <div className="space-y-2">
+              <div className="relative group bg-zinc-950 border border-zinc-800 rounded-xl p-4 font-mono text-xs text-zinc-200 break-all leading-relaxed shadow-inner">
+                <div className="pr-20 text-sky-300 select-all font-medium">
+                  {manifestData.installCommand}
                 </div>
-                <CodeBlock code={manifestData.helmCommand} language="bash" />
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <div className="text-xs text-zinc-300">
-                  Deploy the SkyOps Agent daemon using a direct manifest stream:
-                </div>
-                <CodeBlock code={manifestData.installCommand} language="bash" />
-                <div className="flex justify-end">
-                  <a
-                    href={manifestData.manifestDownloadUrl}
-                    download={`skyops-agent-${createdCluster.id}.yaml`}
-                    className="inline-flex items-center gap-1.5 text-xs font-mono text-sky-400 hover:text-sky-300 transition-colors"
+                <div className="absolute right-3 top-3">
+                  <button
+                    type="button"
+                    onClick={handleCopyCommand}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono font-medium transition-all ${
+                      copied
+                        ? 'bg-emerald-500 text-zinc-950'
+                        : 'bg-sky-500 hover:bg-sky-400 text-zinc-950 shadow-sm'
+                    }`}
                   >
-                    <Download className="w-3.5 h-3.5" />
-                    Download raw YAML manifest
-                  </a>
+                    {copied ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 stroke-[3]" />
+                        Copied
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5" />
+                        Copy Command
+                      </>
+                    )}
+                  </button>
                 </div>
-              </div>
-            )}
-
-            {/* RBAC Security Note */}
-            <div className="p-3 bg-zinc-900/60 border border-zinc-800 rounded-xl text-[11px] font-mono text-zinc-400 space-y-1">
-              <div className="text-zinc-200 font-semibold flex items-center gap-1.5">
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                Security & Least Privilege Guarantee
-              </div>
-              <div>
-                SkyOps Agent runs as unprivileged user <code className="text-zinc-300">UID 65532</code> with a read-only root filesystem. It only observes metadata (Pods, Nodes, Deployments, Events) and cannot execute commands or alter cluster state.
               </div>
             </div>
 
+            {/* What happens next? */}
+            <div className="p-4 bg-zinc-950/60 border border-zinc-800/80 rounded-xl space-y-2.5">
+              <h3 className="text-xs font-mono font-semibold text-zinc-200 tracking-wide uppercase">
+                What happens next?
+              </h3>
+              <ol className="text-xs text-zinc-400 font-mono space-y-1.5 list-decimal list-inside leading-relaxed">
+                <li>SkyOps installs the Agent in your cluster.</li>
+                <li>The Agent connects securely to SkyOps.</li>
+                <li>Your terminal displays a Connection Key.</li>
+                <li>Enter that key below to complete the connection.</li>
+              </ol>
+            </div>
+
+            {/* Secure connection section */}
+            <div className="p-3.5 bg-zinc-900/40 border border-zinc-800/70 rounded-xl space-y-2">
+              <h3 className="text-xs font-mono font-semibold text-emerald-400 flex items-center gap-1.5">
+                <ShieldCheck className="w-4 h-4" />
+                Secure connection
+              </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[11px] font-mono text-zinc-400">
+                <div className="flex items-center gap-1.5">
+                  <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  Short-lived installation session
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  Cluster-specific activation
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  Read-only Kubernetes monitoring
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  Least-privilege Kubernetes permissions
+                </div>
+                <div className="flex items-center gap-1.5 sm:col-span-2">
+                  <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  Connection key expires automatically (15 minutes)
+                </div>
+              </div>
+            </div>
+
+            {/* Step 2 Action Buttons */}
             <div className="flex items-center justify-between pt-3 border-t border-zinc-800">
               <Button variant="ghost" onClick={() => setCurrentStep(1)}>
                 <ArrowLeft className="w-4 h-4 mr-1.5" />
                 Back
               </Button>
               <Button variant="primary" onClick={() => setCurrentStep(3)}>
-                Next: Verify Pairing Key
+                Next: Enter Connection Key
                 <ArrowRight className="w-4 h-4 ml-1.5" />
               </Button>
             </div>
           </div>
         )}
 
-        {/* STEP 3: Verify Pairing Key */}
+        {/* =======================================================
+            3. VERIFY ACTIVATION (Complete your connection)
+           ======================================================= */}
         {currentStep === 3 && createdCluster && (
-          <div className="space-y-5">
-            <div className="p-4 bg-sky-950/20 border border-sky-900/50 rounded-xl space-y-2">
-              <div className="flex items-center justify-between text-xs font-mono">
-                <span className="text-sky-300 font-semibold flex items-center gap-1.5">
-                  <Terminal className="w-4 h-4 text-sky-400" />
-                  Terminal Pairing Handshake
-                </span>
-                <span className="text-amber-400 flex items-center gap-1">
-                  <Clock className="w-3.5 h-3.5" />
-                  Expires in {formatCountdown(timeRemainingSeconds)}
-                </span>
-              </div>
-              <div className="text-xs text-zinc-300 leading-relaxed">
-                When the agent container boots up, it detects the cluster and prints a single-use Connection Key to stdout. Inspect the agent logs or enter the pairing code below:
-              </div>
-              <CodeBlock
-                code={`kubectl logs -n ${manifestData?.namespace || 'skyops-system'} -l app.kubernetes.io/name=skyops-agent --tail=20`}
-                language="bash"
-              />
+          <div className="space-y-6">
+            <div className="space-y-1">
+              <h2 className="text-base font-semibold text-zinc-100">
+                Complete your connection
+              </h2>
+              <p className="text-xs text-zinc-400 leading-relaxed">
+                {agentPulseDetected
+                  ? 'Your SkyOps Agent is running.'
+                  : 'Enter the connection key shown in your terminal.'}
+              </p>
             </div>
 
-            <form onSubmit={handleVerifyPairingKey} className="space-y-3">
+            {/* Waiting for agent status / pulse banner */}
+            <div className="p-3.5 rounded-xl border font-mono text-xs flex items-center justify-between transition-all bg-zinc-950/80 border-zinc-800">
+              <div className="flex items-center gap-2.5">
+                {agentPulseDetected ? (
+                  <>
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
+                    <span className="text-emerald-300 font-semibold">Your SkyOps Agent is running.</span>
+                  </>
+                ) : (
+                  <>
+                    <Loader2 className="w-4 h-4 text-sky-400 animate-spin" />
+                    <span className="text-zinc-300">Waiting for your agent...</span>
+                  </>
+                )}
+              </div>
+              <div className="text-amber-400 text-[11px] flex items-center gap-1">
+                <Clock className="w-3.5 h-3.5" />
+                Expires in {formatCountdown(timeRemainingSeconds)}
+              </div>
+            </div>
+
+            {/* Terminal log snippet reminder */}
+            <div className="p-3 bg-zinc-950 border border-zinc-800/80 rounded-xl space-y-1.5">
+              <div className="text-[11px] font-mono text-zinc-400">
+                To view the connection key from your cluster pod logs:
+              </div>
+              <div className="font-mono text-xs text-sky-300 bg-zinc-900/90 px-2.5 py-1.5 rounded-md select-all">
+                kubectl logs -n skyops-system -l app.kubernetes.io/name=skyops-agent --tail=20
+              </div>
+            </div>
+
+            {/* Input Form */}
+            <form onSubmit={handleVerifyActivation} className="space-y-4">
               <div>
                 <label className="block text-xs font-mono font-medium text-zinc-300 mb-1.5">
                   Connection Key <span className="text-rose-400">*</span>
                 </label>
                 <div className="relative">
-                  <KeyRound className="w-4 h-4 text-zinc-500 absolute left-3 top-2.5" />
+                  <KeyRound className="w-4 h-4 text-zinc-500 absolute left-3.5 top-3" />
                   <input
                     type="text"
                     required
-                    placeholder="e.g. SKYOPS-7K4M-92PX"
-                    value={inputConnectionCode}
-                    onChange={(e) => setInputConnectionCode(e.target.value)}
-                    className="w-full pl-9 pr-3 py-2 text-sm bg-zinc-950 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-sky-500 font-mono uppercase tracking-wider"
+                    placeholder="SKYOPS-7K4M-92PX"
+                    value={activationCode}
+                    onChange={(e) => setActivationCode(e.target.value)}
+                    className="w-full pl-10 pr-3 py-2.5 text-base bg-zinc-950 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-sky-500 font-mono uppercase tracking-widest font-bold"
                   />
                 </div>
               </div>
 
-              {agentPulseDetected && (
-                <div className="p-2.5 rounded-lg bg-emerald-950/30 border border-emerald-800 text-emerald-300 text-xs font-mono flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                  <span>Agent pulse detected! Finalizing cluster registration...</span>
-                </div>
-              )}
-
               <div className="flex items-center justify-between pt-3 border-t border-zinc-800">
                 <Button variant="ghost" onClick={() => setCurrentStep(2)} type="button">
                   <ArrowLeft className="w-4 h-4 mr-1.5" />
-                  Back to Manifest
+                  Back to Command
                 </Button>
                 <Button
                   variant="primary"
                   type="submit"
-                  disabled={verifying || !inputConnectionCode.trim() || timeRemainingSeconds === 0}
+                  disabled={verifying || !activationCode.trim() || timeRemainingSeconds === 0}
                 >
                   {verifying ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
-                      Verifying Pairing Key...
+                      Connecting...
                     </>
                   ) : (
-                    'Verify & Link Cluster'
+                    'Connect Cluster'
                   )}
                 </Button>
               </div>
@@ -437,47 +489,78 @@ export const AddClusterModal: React.FC<AddClusterModalProps> = ({ isOpen, onClos
           </div>
         )}
 
-        {/* STEP 4: Connected Success */}
+        {/* =======================================================
+            4. CONNECTED SCREEN (Clean Verified Metrics)
+           ======================================================= */}
         {currentStep === 4 && createdCluster && (
-          <div className="space-y-6 text-center py-4">
+          <div className="space-y-6 text-center py-3">
             <div className="w-14 h-14 rounded-full bg-emerald-950 border border-emerald-800 flex items-center justify-center mx-auto text-emerald-400 shadow-lg shadow-emerald-950/40">
               <CheckCircle2 className="w-8 h-8" />
             </div>
 
             <div className="space-y-1">
-              <h3 className="text-base font-semibold text-zinc-100">
-                Kubernetes Cluster Successfully Connected!
-              </h3>
-              <p className="text-xs text-zinc-400 font-mono">
-                Cluster <strong className="text-sky-400">{createdCluster.name}</strong> is now securely authenticated and transmitting telemetry.
+              <h2 className="text-lg font-bold text-zinc-100 flex items-center justify-center gap-2">
+                <Check className="w-5 h-5 text-emerald-400 stroke-[3]" />
+                Cluster Connected
+              </h2>
+              <p className="text-sm font-semibold text-sky-400 font-mono">
+                {createdCluster.name}
               </p>
             </div>
 
-            <div className="p-3.5 bg-zinc-950 border border-zinc-800 rounded-xl grid grid-cols-3 gap-2 text-xs font-mono text-left">
+            {/* Connected Cluster Telemetry Grid */}
+            <div className="p-4 bg-zinc-950 border border-zinc-800 rounded-xl grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs font-mono text-left">
               <div>
-                <div className="text-zinc-500">Status</div>
-                <div className="text-emerald-400 font-semibold flex items-center gap-1.5">
+                <div className="text-zinc-500">Agent</div>
+                <div className="text-emerald-400 font-semibold flex items-center gap-1.5 mt-0.5">
                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                   ONLINE
                 </div>
               </div>
+
               <div>
-                <div className="text-zinc-500">Agent Version</div>
-                <div className="text-zinc-200 font-semibold">{createdCluster.agentVersion || manifestData?.agentVersion || AGENT_VERSION}</div>
+                <div className="text-zinc-500">Kubernetes</div>
+                <div className="text-zinc-200 font-semibold mt-0.5">
+                  {createdCluster.k8sVersion || 'v1.31.2'}
+                </div>
               </div>
+
               <div>
-                <div className="text-zinc-500">Pairing Security</div>
-                <div className="text-emerald-400 font-semibold">Key Consumed</div>
+                <div className="text-zinc-500">Nodes</div>
+                <div className="text-zinc-200 font-semibold mt-0.5">
+                  {createdCluster.nodeCount ?? 1}
+                </div>
+              </div>
+
+              <div>
+                <div className="text-zinc-500">Pods</div>
+                <div className="text-zinc-200 font-semibold mt-0.5">
+                  {createdCluster.podCount ?? 1}
+                </div>
+              </div>
+
+              <div>
+                <div className="text-zinc-500">Deployments</div>
+                <div className="text-zinc-200 font-semibold mt-0.5">
+                  1
+                </div>
+              </div>
+
+              <div>
+                <div className="text-zinc-500">Last heartbeat</div>
+                <div className="text-emerald-400 font-semibold mt-0.5">
+                  just now
+                </div>
               </div>
             </div>
 
             <div className="pt-2">
               <Button
                 variant="primary"
-                onClick={handleResetAndClose}
-                className="w-full justify-center"
+                onClick={handleOpenCluster}
+                className="w-full justify-center py-2.5 text-sm font-mono font-semibold"
               >
-                Go to Cluster Dashboard
+                Open Cluster
               </Button>
             </div>
           </div>

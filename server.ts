@@ -271,7 +271,7 @@ app.get('/api/v1/clusters/:id/manifests', requireUserAuth, requireOrgMembership,
   });
 
   const installKeyParam = cluster.installKey ? `?key=${cluster.installKey}` : '';
-  const installCommand = `kubectl apply -f ${serverUrl}/api/v1/clusters/${cluster.id}/manifest.yaml${installKeyParam}`;
+  const installCommand = `kubectl apply -f "${serverUrl}/api/v1/clusters/${cluster.id}/manifest.yaml${installKeyParam}"`;
   const manifestDownloadUrl = `${serverUrl}/api/v1/clusters/${cluster.id}/manifest.yaml${installKeyParam}`;
 
   res.json({
@@ -288,6 +288,40 @@ app.get('/api/v1/clusters/:id/manifests', requireUserAuth, requireOrgMembership,
     installCommand,
     manifestDownloadUrl
   });
+});
+
+// Single-command curl installation manifest endpoint:
+// curl -fsSL "https://<REAL-SKYOPS-API>/api/v1/install/<INSTALLATION_SESSION>" | kubectl apply -f -
+app.get('/api/v1/install/:sessionKey', (req: Request, res: Response) => {
+  const { sessionKey } = req.params;
+  const cluster = store.getClusterByInstallKey(sessionKey);
+  if (!cluster) {
+    return res
+      .status(404)
+      .type('text/plain')
+      .send('# Error 404: Invalid or expired SkyOps installation session.\n# Please generate a new connection command from the SkyOps Dashboard.\n');
+  }
+
+  if (cluster.installKeyExpiresAt && Date.now() > cluster.installKeyExpiresAt) {
+    return res
+      .status(403)
+      .type('text/plain')
+      .send('# Error 403: SkyOps installation session has expired (valid for 60 minutes).\n# Please generate a new connection command from the SkyOps Dashboard.\n');
+  }
+
+  const serverUrl = getPublicServerUrl(req);
+  const token = cluster.agentToken || 'sky_agent_configured_token';
+
+  const manifest = generateKubernetesManifest({
+    clusterId: cluster.id,
+    clusterName: cluster.name,
+    token,
+    serverUrl
+  });
+
+  res.setHeader('Content-Type', 'text/yaml; charset=utf-8');
+  res.setHeader('Content-Disposition', `inline; filename="skyops-agent-${cluster.id}.yaml"`);
+  res.status(200).send(manifest);
 });
 
 // Direct raw YAML manifest stream for direct kubectl apply

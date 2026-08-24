@@ -1,0 +1,256 @@
+{
+  "users": {
+    "hbepfD5Ch2YwozIU7UiuLv6py2r1": {
+      "id": "hbepfD5Ch2YwozIU7UiuLv6py2r1",
+      "email": "dhandesaurav37@gmail.com",
+      "name": "Saurav Dhande"
+    },
+    "usr-sre-lead": {
+      "id": "usr-sre-lead",
+      "email": "dhandesaurav37@gmail.com",
+      "name": "Alex Rivera (Staff SRE)"
+    }
+  },
+  "orgs": {
+    "org-production-sre": {
+      "id": "org-production-sre",
+      "name": "Acme Platform Engineering",
+      "slug": "acme-platform",
+      "createdAt": 1784996989203,
+      "membersCount": 3
+    },
+    "org-85197e5f1bd6": {
+      "id": "org-85197e5f1bd6",
+      "name": "Saurav's Workspace",
+      "slug": "saurav-s-workspace",
+      "createdAt": 1787588999005,
+      "membersCount": 1
+    },
+    "org-0890c5036a3e": {
+      "id": "org-0890c5036a3e",
+      "name": "Alex's Workspace",
+      "slug": "alex-s-workspace",
+      "createdAt": 1787589227187,
+      "membersCount": 1
+    }
+  },
+  "members": {
+    "org-85197e5f1bd6": [
+      {
+        "userId": "hbepfD5Ch2YwozIU7UiuLv6py2r1",
+        "email": "dhandesaurav37@gmail.com",
+        "name": "Saurav Dhande",
+        "role": "OWNER",
+        "joinedAt": 1787588999005
+      }
+    ],
+    "org-0890c5036a3e": [
+      {
+        "userId": "usr-sre-lead",
+        "email": "dhandesaurav37@gmail.com",
+        "name": "Alex Rivera (Staff SRE)",
+        "role": "OWNER",
+        "joinedAt": 1787589227187
+      }
+    ]
+  },
+  "clusters": {
+    "cls-5a6532fb1d5f": {
+      "id": "cls-5a6532fb1d5f",
+      "orgId": "org-0890c5036a3e",
+      "name": "killercoda-prod-test",
+      "description": "Integration validation cluster",
+      "status": "AGENT_OFFLINE",
+      "agentStatus": "OFFLINE",
+      "connectionState": "offline",
+      "connectionCode": "SKYOPS-Y964-93JA",
+      "connectionCodeExpiresAt": 1787590127189,
+      "installKey": "sky_inst_a5966077c9d1a83904d3738bab24f0d34c2e649e",
+      "installKeyExpiresAt": 1787592827190,
+      "nodeCount": 1,
+      "podCount": 1,
+      "openIncidentCount": 0,
+      "createdAt": 1787589227190,
+      "agentToken": "sky_agent_7eb2a71ac466f48237cfee2133f0346910a418071f1233df",
+      "lastSeenAt": 1787589233732,
+      "lastHeartbeat": 1787589233732,
+      "lastHeartbeatAt": 1787589233732,
+      "agentDetectedAt": 1787589231566,
+      "connectedAt": 1787589231566,
+      "agentVersion": "v1.5.0",
+      "k8sVersion": "v1.31.2",
+      "connectionStatus": "connected"
+    },
+    "cls-c42f847451de": {
+      "id": "cls-c42f847451de",
+      "orgId": "org-85197e5f1bd6",
+      "name": "sky-cluster",
+      "description": "",
+      "status": "pending",
+      "agentStatus": "PENDING",
+      "connectionState": "pending",
+      "connectionCode": "SKYOPS-5URQ-DM4H",
+      "connectionCodeExpiresAt": 1787590955735,
+      "installKey": "sky_inst_516f74e48b06deb4ed093c3a5224d26a84da9920",
+      "installKeyExpiresAt": 1787593655735,
+      "nodeCount": 0,
+      "podCount": 0,
+      "openIncidentCount": 0,
+      "createdAt": 1787590055735,
+      "agentToken": "sky_agent_d14f40d516b078f5812923012fe0c3296261aa2c5c6c4d01"
+    },
+    "cls-036f5c494676": {
+      "id": "cls-036f5c494676",
+      "orgId": "org-85197e5f1bd6",
+      "name": "killer-cluster",
+      "description": "Environment: Production",
+      "status": "pending",
+      "agentStatus": "PENDING",
+      "connectionState": "pending",
+      "connectionCode": "DMLC-EN3W",
+      "connectionCodeExpiresAt": 1787592594795,
+      "installKey": "sky_inst_c9922ef4621eddd13d633311e503dfdeab9f7ed5",
+      "installKeyExpiresAt": 1787595294795,
+      "nodeCount": 0,
+      "podCount": 0,
+      "openIncidentCount": 0,
+      "createdAt": 1787591694795,
+      "agentToken": "sky_agent_35bc64d889981a2fb587bc9de2065bdc43df38aa4652f0ea"
+    },
+    "cls-a1a745aadec4": {
+      "id": "cls-a1a745aadec4",
+      "orgId": "org-0890c5036a3e",
+      "name": "E2E Test Cluster",
+      "description": "Verification cluster",
+      "status": "HEALTHY",
+      "agentStatus": "CONNECTED",
+      "connectionState": "connected",
+      "connectionCode": "GH4Q-DLZQ",
+      "connectionCodeExpiresAt": 1787593395318,
+      "installKey": "sky_inst_34c8b9bb3cb7f7f9f96978f90eb989f42086b61c",
+      "installKeyExpiresAt": 1787596095318,
+      "nodeCount": 0,
+      "podCount": 0,
+      "openIncidentCount": 0,
+      "createdAt": 1787592495318,
+      "agentToken": "sky_agent_b55c51cd63fab4b9eb55a0245396273aa3451f0b28cd74c4",
+      "lastSeenAt": 1787592495396,
+      "lastHeartbeat": 1787592495396,
+      "lastHeartbeatAt": 1787592495396,
+      "agentDetectedAt": 1787592495396,
+      "connectedAt": 1787592495396,
+      "agentVersion": "v1.5.0",
+      "k8sVersion": "v1.31.2",
+      "connectionStatus": "connected"
+    },
+    "cls-71d4484f17c8": {
+      "id": "cls-71d4484f17c8",
+      "orgId": "org-0890c5036a3e",
+      "name": "Production EKS Verification",
+      "description": "Verification cluster",
+      "status": "HEALTHY",
+      "agentStatus": "CONNECTED",
+      "connectionState": "connected",
+      "connectionCode": "SKYOPS-DRPW-ADGM",
+      "connectionCodeExpiresAt": 1787593407252,
+      "installKey": "sky_inst_37f27730a72e80b7079975af33719dfe7d085bcc",
+      "installKeyExpiresAt": 1787596107252,
+      "nodeCount": 0,
+      "podCount": 0,
+      "openIncidentCount": 0,
+      "createdAt": 1787592507252,
+      "agentToken": "sky_agent_f13ac7b13070238b36dd0dbdcf4f408c9b10de21a7f66bd1",
+      "lastSeenAt": 1787592507338,
+      "lastHeartbeat": 1787592507338,
+      "lastHeartbeatAt": 1787592507338,
+      "agentDetectedAt": 1787592507338,
+      "connectedAt": 1787592507338,
+      "agentVersion": "v1.5.0",
+      "k8sVersion": "v1.31.2",
+      "connectionStatus": "connected"
+    },
+    "cls-31a850b02e33": {
+      "id": "cls-31a850b02e33",
+      "orgId": "org-0890c5036a3e",
+      "name": "Production EKS Verification",
+      "description": "Verification cluster",
+      "status": "pending",
+      "agentStatus": "PENDING",
+      "connectionState": "pending",
+      "connectionCode": "SKYOPS-MZRN-HWKU",
+      "connectionCodeExpiresAt": 1787593411765,
+      "installKey": "sky_inst_58f645f010b5a444f37d9761acdb62878cc46b11",
+      "installKeyExpiresAt": 1787596111765,
+      "nodeCount": 0,
+      "podCount": 0,
+      "openIncidentCount": 0,
+      "createdAt": 1787592511765,
+      "agentToken": "sky_agent_56c4ad511fb97c77b6db4e1aaa6a91f3bf9c31ebcc932478"
+    }
+  },
+  "clusterTokens": {
+    "9183898f1fb9fcb92e02f62ca0ceaf4bb60ac2e80a4c378ec97452b42b8c6909": {
+      "clusterId": "cls-5a6532fb1d5f",
+      "orgId": "org-0890c5036a3e"
+    },
+    "a79e34c69cb2bfb29c80b9b143dcd6ee2bde8efb744d9310fc290aa5b26ccafc": {
+      "clusterId": "cls-c42f847451de",
+      "orgId": "org-85197e5f1bd6"
+    },
+    "1ab1d3a3c59de66ee5d83b9eda566a065afbf2572ca90875141c3d29c8635d41": {
+      "clusterId": "cls-036f5c494676",
+      "orgId": "org-85197e5f1bd6"
+    },
+    "457f06f9745e4088d3ee73d96a5dfcfa658bce6e7465c88e4a78a538912bb132": {
+      "clusterId": "cls-a1a745aadec4",
+      "orgId": "org-0890c5036a3e"
+    },
+    "49367bf78c47ee7fa54250a2e5b4a9e5f822b32b08bae7280e9b57e48ccb4f06": {
+      "clusterId": "cls-71d4484f17c8",
+      "orgId": "org-0890c5036a3e"
+    },
+    "cb7ed4b7952b5eaa658af98c534e17111a718dc962ca08e07b2bb6363716f4ee": {
+      "clusterId": "cls-31a850b02e33",
+      "orgId": "org-0890c5036a3e"
+    }
+  },
+  "resources": {
+    "cls-5a6532fb1d5f": [
+      {
+        "id": "node-worker-01",
+        "clusterId": "cls-5a6532fb1d5f",
+        "kind": "Node",
+        "name": "node-worker-01",
+        "namespace": "",
+        "status": "Ready",
+        "cpuUsage": 42.5,
+        "memoryUsage": 58.1,
+        "labels": {
+          "node.kubernetes.io/instance-type": "c5.xlarge"
+        },
+        "createdAt": 1787580000000
+      },
+      {
+        "id": "pod-ingress-nginx",
+        "clusterId": "cls-5a6532fb1d5f",
+        "kind": "Pod",
+        "name": "ingress-nginx-controller-748956-2xp91",
+        "namespace": "ingress-nginx",
+        "status": "Running",
+        "restartCount": 0,
+        "cpuUsage": 12,
+        "memoryUsage": 24.5,
+        "createdAt": 1787585000000
+      }
+    ],
+    "cls-c42f847451de": [],
+    "cls-036f5c494676": [],
+    "cls-a1a745aadec4": [],
+    "cls-71d4484f17c8": [],
+    "cls-31a850b02e33": []
+  },
+  "incidents": {},
+  "incidentTimeline": {},
+  "incidentNotes": {},
+  "incidentCounter": 1001
+}

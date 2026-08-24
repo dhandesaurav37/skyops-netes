@@ -93,9 +93,9 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
             <Server className="w-7 h-7" />
           </div>
           <div className="space-y-1.5 max-w-md mx-auto">
-            <h2 className="text-lg font-bold text-zinc-100">No Kubernetes Clusters Connected</h2>
+            <h2 className="text-lg font-bold text-zinc-100">Your SkyOps workspace is ready.</h2>
             <p className="text-xs text-zinc-400 font-mono leading-relaxed">
-              Connect your first cluster to start streaming telemetry and detecting incidents.
+              Connect a Kubernetes cluster to start monitoring your infrastructure.
             </p>
           </div>
           <div>

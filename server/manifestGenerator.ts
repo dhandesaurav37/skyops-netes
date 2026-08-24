@@ -181,10 +181,13 @@ helm upgrade --install skyops-agent skyops/skyops-agent \\
 }
 
 export function generateKubectlCommand(serverUrl: string, clusterId: string, installKey?: string): string {
-  const manifestUrl = installKey
-    ? `${serverUrl}/api/v1/clusters/${clusterId}/manifests/download?key=${installKey}`
-    : `${serverUrl}/api/v1/clusters/${clusterId}/manifests/download`;
-  return `kubectl apply -f "${manifestUrl}"`;
+  const installParam = installKey ? `?key=${installKey}` : '';
+  return `kubectl apply -f "${serverUrl}/api/v1/clusters/${clusterId}/manifest.yaml${installParam}"`;
+}
+
+export function generateInstallCommand(serverUrl: string, clusterId: string, installKey?: string): string {
+  const installParam = installKey ? `?key=${installKey}` : '';
+  return `kubectl apply -f "${serverUrl}/api/v1/clusters/${clusterId}/manifest.yaml${installParam}"`;
 }
 
 export function generateHelmValues(config: ManifestConfig): string {

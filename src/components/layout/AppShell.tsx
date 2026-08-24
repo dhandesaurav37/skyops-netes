@@ -226,6 +226,10 @@ export const AppShell: React.FC<AppShellProps> = ({
         onClusterCreated={() => {
           fetchGlobalData();
         }}
+        onOpenCluster={(clusterId) => {
+          setSelectedClusterId(clusterId);
+          setActiveTab('clusters');
+        }}
       />
     </div>
   );

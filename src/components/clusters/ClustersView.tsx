@@ -77,7 +77,7 @@ export const ClustersView: React.FC<ClustersViewProps> = ({
             Refresh
           </Button>
           <Button variant="primary" size="sm" onClick={onOpenAddCluster} icon={<Plus className="w-3.5 h-3.5" />}>
-            Add Cluster
+            Connect Cluster
           </Button>
         </div>
       </div>

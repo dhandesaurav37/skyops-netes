@@ -34,6 +34,7 @@ func printPairingBanner(connectionCode string) {
 	fmt.Println("Enter this key in the SkyOps dashboard.")
 	fmt.Println()
 	fmt.Println("This key expires in 15 minutes.")
+	fmt.Println()
 	fmt.Println("========================================")
 	fmt.Println()
 }

@@ -255,10 +255,10 @@ class DataStore {
   }
 
   /**
-   * Generates a cryptographically random, human-friendly pairing code e.g. SKYOPS-7K4M-92PX
+   * Generates a cryptographically random, human-friendly connection key e.g. SKYOPS-7K4M-92PX
    */
   private generatePairingCode(): string {
-    const alphabet = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'; // Base32 unambiguous charset
+    const alphabet = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'; // Base32 unambiguous charset (no 0, 1, I, O)
     const bytes = crypto.randomBytes(8);
     let part1 = '';
     let part2 = '';
@@ -267,6 +267,16 @@ class DataStore {
       part2 += alphabet[bytes[i + 4] % alphabet.length];
     }
     return `SKYOPS-${part1}-${part2}`;
+  }
+
+  public getClusterByInstallKey(installKey: string): Cluster | null {
+    if (!installKey) return null;
+    for (const cluster of this.clusters.values()) {
+      if (cluster.installKey === installKey) {
+        return cluster;
+      }
+    }
+    return null;
   }
 
   public createCluster(
@@ -278,11 +288,11 @@ class DataStore {
     const rawToken = `sky_agent_${crypto.randomBytes(24).toString('hex')}`;
     const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
 
-    // Generate single-use, 15-minute connection pairing key
+    // Generate single-use, 15-minute connection pairing key (e.g. 8F4K-29XM)
     const connectionCode = this.generatePairingCode();
     const connectionCodeExpiresAt = Date.now() + 15 * 60 * 1000; // 15 minutes validity
 
-    // Generate separate manifest installation key for secure automated download
+    // Generate separate short-lived installation session for secure automated download
     const installKey = `sky_inst_${crypto.randomBytes(20).toString('hex')}`;
     const installKeyExpiresAt = Date.now() + 60 * 60 * 1000; // 60 minutes validity
 
@@ -324,18 +334,19 @@ class DataStore {
     }
 
     if (!cluster.connectionCode) {
-      throw new Error('No active pairing key found for this cluster or key was already consumed. Please regenerate pairing credentials.');
+      throw new Error('This connection key has already been consumed or is invalid. Generate a new connection key.');
     }
 
     if (cluster.connectionCodeExpiresAt && Date.now() > cluster.connectionCodeExpiresAt) {
-      throw new Error('The pairing key has expired (valid for 15 minutes). Please generate a new connection key.');
+      throw new Error('This connection key has expired. Generate a new connection key.');
     }
 
-    const cleanProvided = providedCode.trim().toUpperCase().replace(/[\s-]+/g, '');
-    const cleanStored = cluster.connectionCode.trim().toUpperCase().replace(/[\s-]+/g, '');
+    // Strip whitespace, hyphens, and optional SKYOPS- prefix
+    const cleanProvided = providedCode.trim().toUpperCase().replace(/^SKYOPS-?/, '').replace(/[\s-]+/g, '');
+    const cleanStored = cluster.connectionCode.trim().toUpperCase().replace(/^SKYOPS-?/, '').replace(/[\s-]+/g, '');
 
     if (cleanProvided !== cleanStored) {
-      throw new Error('Invalid connection key. Please verify the key displayed by the SkyOps Agent terminal output.');
+      throw new Error('That connection key is incorrect.');
     }
 
     // Success: Activate connection and permanently invalidate the single-use pairing code and installKey
@@ -343,8 +354,8 @@ class DataStore {
     cluster.agentStatus = 'CONNECTED';
     cluster.connectionState = 'connected';
     cluster.connectedAt = Date.now();
-    cluster.lastHeartbeat = Date.now();
-    cluster.lastHeartbeatAt = Date.now();
+    cluster.lastHeartbeat = cluster.lastHeartbeat || Date.now();
+    cluster.lastHeartbeatAt = cluster.lastHeartbeatAt || Date.now();
     cluster.connectionCode = undefined;
     cluster.connectionCodeExpiresAt = undefined;
     cluster.installKey = undefined;
