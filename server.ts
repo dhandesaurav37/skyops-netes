@@ -389,6 +389,10 @@ app.post('/api/v1/agent/register', requireAgentAuth, (req: AuthenticatedAgentReq
   const { agentVersion, k8sVersion } = req.body;
   try {
     const result = store.registerAgent(req.clusterId!, agentVersion, k8sVersion);
+    const cluster = store.getClusterByIdInternal(req.clusterId!);
+    console.log(
+      `[AGENT_REGISTER] clusterId=${req.clusterId} agentVersion=${cluster?.agentVersion || agentVersion} k8sVersion=${cluster?.k8sVersion || k8sVersion || 'unknown'} timestamp=${Date.now()}`
+    );
     res.json(result);
   } catch (err: any) {
     res.status(404).json({ error: err?.message || 'Cluster registration failed' });
@@ -409,6 +413,11 @@ app.post('/api/v1/agent/heartbeat', requireAgentAuth, (req: AuthenticatedAgentRe
     return res.status(404).json({ error: 'Cluster associated with agent token not found' });
   }
 
+  const cluster = store.getClusterByIdInternal(req.clusterId!);
+  console.log(
+    `[AGENT_HEARTBEAT] clusterId=${req.clusterId} agentVersion=${cluster?.agentVersion} nodes=${cluster?.nodeCount ?? 0} pods=${cluster?.podCount ?? 0} k8sVersion=${cluster?.k8sVersion ?? 'unknown'} timestamp=${Date.now()}`
+  );
+
   res.json({
     status: 'ACK',
     clusterId: req.clusterId,
@@ -419,20 +428,26 @@ app.post('/api/v1/agent/heartbeat', requireAgentAuth, (req: AuthenticatedAgentRe
 
 app.post('/api/v1/agent/telemetry', requireAgentAuth, (req: AuthenticatedAgentRequest, res) => {
   const { items, resources } = req.body;
+  let extractedResources: KubernetesResource[] = [];
 
   if (Array.isArray(resources)) {
-    store.syncClusterResources(req.clusterId!, resources as KubernetesResource[]);
+    extractedResources = resources as KubernetesResource[];
   } else if (Array.isArray(items)) {
-    const extractedResources: KubernetesResource[] = [];
     for (const item of items) {
       if (item.payload && item.payload.kind && item.payload.name) {
         extractedResources.push(item.payload as KubernetesResource);
       }
     }
-    if (extractedResources.length > 0) {
-      store.syncClusterResources(req.clusterId!, extractedResources);
-    }
   }
+
+  if (extractedResources.length > 0) {
+    store.syncClusterResources(req.clusterId!, extractedResources);
+  }
+
+  const cluster = store.getClusterByIdInternal(req.clusterId!);
+  console.log(
+    `[TELEMETRY_INGESTION] clusterId=${req.clusterId} observations=${extractedResources.length} nodes=${cluster?.nodeCount ?? 0} pods=${cluster?.podCount ?? 0} k8sVersion=${cluster?.k8sVersion ?? 'unknown'} timestamp=${Date.now()}`
+  );
 
   res.json({
     status: 'PROCESSED',

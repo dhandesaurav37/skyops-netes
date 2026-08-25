@@ -122,9 +122,9 @@
       "orgId": "org-0890c5036a3e",
       "name": "E2E Test Cluster",
       "description": "Verification cluster",
-      "status": "HEALTHY",
-      "agentStatus": "CONNECTED",
-      "connectionState": "connected",
+      "status": "AGENT_OFFLINE",
+      "agentStatus": "OFFLINE",
+      "connectionState": "offline",
       "connectionCode": "GH4Q-DLZQ",
       "connectionCodeExpiresAt": 1787593395318,
       "installKey": "sky_inst_34c8b9bb3cb7f7f9f96978f90eb989f42086b61c",
@@ -148,9 +148,9 @@
       "orgId": "org-0890c5036a3e",
       "name": "Production EKS Verification",
       "description": "Verification cluster",
-      "status": "HEALTHY",
-      "agentStatus": "CONNECTED",
-      "connectionState": "connected",
+      "status": "AGENT_OFFLINE",
+      "agentStatus": "OFFLINE",
+      "connectionState": "offline",
       "connectionCode": "SKYOPS-DRPW-ADGM",
       "connectionCodeExpiresAt": 1787593407252,
       "installKey": "sky_inst_37f27730a72e80b7079975af33719dfe7d085bcc",
@@ -186,6 +186,68 @@
       "openIncidentCount": 0,
       "createdAt": 1787592511765,
       "agentToken": "sky_agent_56c4ad511fb97c77b6db4e1aaa6a91f3bf9c31ebcc932478"
+    },
+    "cls-4ce416345369": {
+      "id": "cls-4ce416345369",
+      "orgId": "org-85197e5f1bd6",
+      "name": "ggg",
+      "description": "Environment: Production",
+      "status": "pending",
+      "agentStatus": "PENDING",
+      "connectionState": "pending",
+      "connectionCode": "SKYOPS-L55M-DK9D",
+      "connectionCodeExpiresAt": 1787593528055,
+      "installKey": "sky_inst_68c7fa1ebc6200dadceffd27b62966bf6feeb7a9",
+      "installKeyExpiresAt": 1787596228055,
+      "nodeCount": 0,
+      "podCount": 0,
+      "openIncidentCount": 0,
+      "createdAt": 1787592628055,
+      "agentToken": "sky_agent_5fbbbc65065af879b9068aef26f4539e538a8ed0db633a28"
+    },
+    "cls-96d308f392fe": {
+      "id": "cls-96d308f392fe",
+      "orgId": "org-0890c5036a3e",
+      "name": "e2e-verification-cluster",
+      "description": "Real K8s cluster test",
+      "status": "AGENT_OFFLINE",
+      "agentStatus": "OFFLINE",
+      "connectionState": "offline",
+      "connectionCode": "SKYOPS-3TB6-4Y5Z",
+      "connectionCodeExpiresAt": 1787596400581,
+      "installKey": "sky_inst_4dafee0de30f35e4da605284a5735b2cd1de90c8",
+      "installKeyExpiresAt": 1787599100581,
+      "nodeCount": 2,
+      "podCount": 2,
+      "openIncidentCount": 0,
+      "createdAt": 1787595500581,
+      "agentToken": "sky_agent_d393a490301a87d0b1fdf04e18c003664dfcc44d10ada8b4",
+      "lastSeenAt": 1787595500602,
+      "lastHeartbeat": 1787595500602,
+      "lastHeartbeatAt": 1787595500602,
+      "agentDetectedAt": 1787595500602,
+      "connectedAt": 1787595500602,
+      "agentVersion": "v1.5.0",
+      "k8sVersion": "v1.32.1",
+      "connectionStatus": "connected"
+    },
+    "cls-8912f8ad5aab": {
+      "id": "cls-8912f8ad5aab",
+      "orgId": "org-85197e5f1bd6",
+      "name": "hhh",
+      "description": "Environment: Production",
+      "status": "pending",
+      "agentStatus": "PENDING",
+      "connectionState": "pending",
+      "connectionCode": "SKYOPS-S54L-YY6K",
+      "connectionCodeExpiresAt": 1787597019684,
+      "installKey": "sky_inst_c20ba56a7afba44207835499c0cdfdb219773406",
+      "installKeyExpiresAt": 1787599719684,
+      "nodeCount": 0,
+      "podCount": 0,
+      "openIncidentCount": 0,
+      "createdAt": 1787596119684,
+      "agentToken": "sky_agent_c314764b9bfdffa347a3bfef4b06d793fea4d535578d1936"
     }
   },
   "clusterTokens": {
@@ -212,6 +274,18 @@
     "cb7ed4b7952b5eaa658af98c534e17111a718dc962ca08e07b2bb6363716f4ee": {
       "clusterId": "cls-31a850b02e33",
       "orgId": "org-0890c5036a3e"
+    },
+    "ca16c2989ee6f9439bac3cdd7d3e71d1b81b714b67df925246ac26823071534d": {
+      "clusterId": "cls-4ce416345369",
+      "orgId": "org-85197e5f1bd6"
+    },
+    "7455de55abd037d7dd3820fbed6d8ec0d6e062ba1614b97e0a1148e88b495094": {
+      "clusterId": "cls-96d308f392fe",
+      "orgId": "org-0890c5036a3e"
+    },
+    "308822594f92633be7eed8ebe213baa20e4d51324e716901bc4065c404dba399": {
+      "clusterId": "cls-8912f8ad5aab",
+      "orgId": "org-85197e5f1bd6"
     }
   },
   "resources": {
@@ -247,7 +321,94 @@
     "cls-036f5c494676": [],
     "cls-a1a745aadec4": [],
     "cls-71d4484f17c8": [],
-    "cls-31a850b02e33": []
+    "cls-31a850b02e33": [],
+    "cls-4ce416345369": [],
+    "cls-96d308f392fe": [
+      {
+        "kind": "Node",
+        "name": "k8s-node-worker-01",
+        "status": "Ready",
+        "health": "HEALTHY",
+        "createdAt": 1787595400610,
+        "updatedAt": 1787595500610,
+        "statusSummary": {
+          "kubeletVersion": "v1.32.1",
+          "osImage": "Ubuntu 24.04 LTS"
+        }
+      },
+      {
+        "kind": "Node",
+        "name": "k8s-node-worker-02",
+        "status": "Ready",
+        "health": "HEALTHY",
+        "createdAt": 1787595400610,
+        "updatedAt": 1787595500610,
+        "statusSummary": {
+          "kubeletVersion": "v1.32.1",
+          "osImage": "Ubuntu 24.04 LTS"
+        }
+      },
+      {
+        "kind": "Pod",
+        "namespace": "kube-system",
+        "name": "coredns-7c65d6cfc9-abc12",
+        "status": "Running",
+        "health": "HEALTHY",
+        "createdAt": 1787595450610,
+        "updatedAt": 1787595500610,
+        "specSummary": {
+          "nodeName": "k8s-node-worker-01"
+        },
+        "containers": [
+          {
+            "name": "coredns",
+            "image": "registry.k8s.io/coredns/coredns:v1.11.3",
+            "ready": true,
+            "restartCount": 0,
+            "state": "running"
+          }
+        ]
+      },
+      {
+        "kind": "Pod",
+        "namespace": "default",
+        "name": "frontend-app-6d8b9f7cb-xyz99",
+        "status": "Running",
+        "health": "HEALTHY",
+        "createdAt": 1787595480610,
+        "updatedAt": 1787595500610,
+        "specSummary": {
+          "nodeName": "k8s-node-worker-02"
+        },
+        "containers": [
+          {
+            "name": "web",
+            "image": "nginx:alpine",
+            "ready": true,
+            "restartCount": 0,
+            "state": "running"
+          }
+        ]
+      },
+      {
+        "kind": "Deployment",
+        "namespace": "default",
+        "name": "frontend-app",
+        "status": "1/1 Ready",
+        "health": "HEALTHY",
+        "createdAt": 1787595480610,
+        "updatedAt": 1787595500610,
+        "specSummary": {
+          "replicas": 1
+        },
+        "statusSummary": {
+          "replicas": 1,
+          "readyReplicas": 1,
+          "availableReplicas": 1
+        }
+      }
+    ],
+    "cls-8912f8ad5aab": []
   },
   "incidents": {},
   "incidentTimeline": {},

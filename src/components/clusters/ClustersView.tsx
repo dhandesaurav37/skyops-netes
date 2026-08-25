@@ -166,10 +166,10 @@ export const ClustersView: React.FC<ClustersViewProps> = ({
                           <span className="text-zinc-500">Offline</span>
                         )}
                       </div>
-                      <div className="text-[10px] text-zinc-500">{cluster.agentVersion || 'v1.4.2'}</div>
+                      <div className="text-[10px] text-zinc-500">{cluster.agentVersion || '—'}</div>
                     </td>
 
-                    <td className="px-5 py-3.5 text-zinc-400">{cluster.k8sVersion || 'v1.31.2'}</td>
+                    <td className="px-5 py-3.5 text-zinc-400">{cluster.k8sVersion || '—'}</td>
 
                     <td className="px-5 py-3.5">
                       <div className="flex items-center gap-1.5 text-zinc-200 font-medium">

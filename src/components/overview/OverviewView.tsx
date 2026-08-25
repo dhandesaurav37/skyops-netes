@@ -196,7 +196,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
                         )}
                       </div>
                       <div className="flex items-center gap-3 text-xs font-mono text-zinc-400">
-                        <span>K8s {cluster.k8sVersion || 'v1.31'}</span>
+                        <span>{cluster.k8sVersion ? `K8s ${cluster.k8sVersion}` : (cluster.agentStatus === 'CONNECTED' ? 'K8s (detecting)' : 'K8s —')}</span>
                         <span>•</span>
                         <span>{cluster.nodeCount} Nodes</span>
                         <span>•</span>

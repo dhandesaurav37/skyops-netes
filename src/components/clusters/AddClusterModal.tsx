@@ -521,14 +521,14 @@ export const AddClusterModal: React.FC<AddClusterModalProps> = ({
               <div>
                 <div className="text-zinc-500">Kubernetes</div>
                 <div className="text-zinc-200 font-semibold mt-0.5">
-                  {createdCluster.k8sVersion || 'v1.31.2'}
+                  {createdCluster.k8sVersion || 'Detecting...'}
                 </div>
               </div>
 
               <div>
                 <div className="text-zinc-500">Nodes</div>
                 <div className="text-zinc-200 font-semibold mt-0.5">
-                  {createdCluster.nodeCount ?? 1}
+                  {createdCluster.nodeCount ?? 0}
                 </div>
               </div>
 

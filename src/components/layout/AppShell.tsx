@@ -1,6 +1,7 @@
 import { Bell, HelpCircle, Shield, Terminal } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 import { api } from '../../api/client';
+import { AGENT_VERSION } from '../../config/version';
 import { useAuth } from '../../context/AuthContext';
 import { Cluster, Incident, OverviewMetrics } from '../../types/index';
 import { AddClusterModal } from '../clusters/AddClusterModal';
@@ -144,7 +145,7 @@ export const AppShell: React.FC<AppShellProps> = ({
             </span>
             <span className="text-zinc-700">|</span>
             <span>
-              SkyOps Agent Version: <strong className="text-zinc-200">v1.4.2</strong>
+              SkyOps Agent Version: <strong className="text-zinc-200">{AGENT_VERSION}</strong>
             </span>
           </div>
         </header>

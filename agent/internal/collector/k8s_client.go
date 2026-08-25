@@ -26,7 +26,8 @@ func NewInClusterK8sClient() (*InClusterK8sClient, error) {
 	host := os.Getenv("KUBERNETES_SERVICE_HOST")
 	port := os.Getenv("KUBERNETES_SERVICE_PORT")
 	if host == "" || port == "" {
-		return nil, fmt.Errorf("kubernetes in-cluster service environment variables (KUBERNETES_SERVICE_HOST / KUBERNETES_SERVICE_PORT) not set")
+		host = "kubernetes.default.svc"
+		port = "443"
 	}
 
 	tokenBytes, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token")
@@ -34,14 +35,20 @@ func NewInClusterK8sClient() (*InClusterK8sClient, error) {
 		return nil, fmt.Errorf("unable to read serviceaccount token: %w", err)
 	}
 
-	caCertPool := x509.NewCertPool()
+	caCertPool, _ := x509.SystemCertPool()
+	if caCertPool == nil {
+		caCertPool = x509.NewCertPool()
+	}
 	caCertBytes, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
-	if err == nil {
+	if err == nil && len(caCertBytes) > 0 {
 		caCertPool.AppendCertsFromPEM(caCertBytes)
 	}
 
+	insecureSkip := os.Getenv("KUBERNETES_INSECURE_SKIP_TLS_VERIFY") == "true"
+
 	tlsConfig := &tls.Config{
-		RootCAs: caCertPool,
+		RootCAs:            caCertPool,
+		InsecureSkipVerify: insecureSkip,
 	}
 
 	transport := &http.Transport{
@@ -88,6 +95,34 @@ func (k *InClusterK8sClient) GetJSON(ctx context.Context, apiPath string, target
 	}
 
 	return json.NewDecoder(resp.Body).Decode(target)
+}
+
+// K8sVersionInfo represents the response from /version
+type K8sVersionInfo struct {
+	Major        string `json:"major"`
+	Minor        string `json:"minor"`
+	GitVersion   string `json:"gitVersion"`
+	GitCommit    string `json:"gitCommit"`
+	GitTreeState string `json:"gitTreeState"`
+	BuildDate    string `json:"buildDate"`
+	GoVersion    string `json:"goVersion"`
+	Compiler     string `json:"compiler"`
+	Platform     string `json:"platform"`
+}
+
+// GetServerVersion queries /version to discover the live Kubernetes version
+func (k *InClusterK8sClient) GetServerVersion(ctx context.Context) (string, error) {
+	var verInfo K8sVersionInfo
+	if err := k.GetJSON(ctx, "/version", &verInfo); err != nil {
+		return "", err
+	}
+	if verInfo.GitVersion != "" {
+		return verInfo.GitVersion, nil
+	}
+	if verInfo.Major != "" && verInfo.Minor != "" {
+		return fmt.Sprintf("v%s.%s", verInfo.Major, verInfo.Minor), nil
+	}
+	return "", fmt.Errorf("no version string found in /version response")
 }
 
 // Low-level K8s object schemas
@@ -205,6 +240,58 @@ type K8sDeployment struct {
 	} `json:"status"`
 }
 
+type K8sStatefulSetList struct {
+	Items []K8sStatefulSet `json:"items"`
+}
+
+type K8sStatefulSet struct {
+	Metadata K8sObjectMeta `json:"metadata"`
+	Spec     struct {
+		Replicas int `json:"replicas"`
+	} `json:"spec"`
+	Status struct {
+		Replicas        int `json:"replicas"`
+		ReadyReplicas   int `json:"readyReplicas"`
+		CurrentReplicas int `json:"currentReplicas"`
+		UpdatedReplicas int `json:"updatedReplicas"`
+	} `json:"status"`
+}
+
+type K8sDaemonSetList struct {
+	Items []K8sDaemonSet `json:"items"`
+}
+
+type K8sDaemonSet struct {
+	Metadata K8sObjectMeta `json:"metadata"`
+	Status   struct {
+		DesiredNumberScheduled int `json:"desiredNumberScheduled"`
+		CurrentNumberScheduled int `json:"currentNumberScheduled"`
+		NumberReady            int `json:"numberReady"`
+		NumberAvailable        int `json:"numberAvailable"`
+		NumberMisscheduled     int `json:"numberMisscheduled"`
+	} `json:"status"`
+}
+
+type K8sPVCList struct {
+	Items []K8sPVC `json:"items"`
+}
+
+type K8sPVC struct {
+	Metadata K8sObjectMeta `json:"metadata"`
+	Spec     struct {
+		StorageClassName string   `json:"storageClassName"`
+		VolumeName       string   `json:"volumeName"`
+		AccessModes      []string `json:"accessModes"`
+		Resources        struct {
+			Requests map[string]string `json:"requests"`
+		} `json:"resources"`
+	} `json:"spec"`
+	Status struct {
+		Phase    string            `json:"phase"`
+		Capacity map[string]string `json:"capacity"`
+	} `json:"status"`
+}
+
 type K8sEventList struct {
 	Items []K8sEvent `json:"items"`
 }
@@ -225,3 +312,4 @@ type K8sEvent struct {
 	LastTimestamp  string `json:"lastTimestamp"`
 	EventTime      string `json:"eventTime"`
 }
+

@@ -54,9 +54,9 @@ export const ClusterDetailView: React.FC<ClusterDetailViewProps> = ({ clusterId,
   const [regenerateLoading, setRegenerateLoading] = useState(false);
   const [disconnectLoading, setDisconnectLoading] = useState(false);
 
-  const fetchDetails = async () => {
+  const fetchDetails = async (isBackground = false) => {
     try {
-      setLoading(true);
+      if (!isBackground) setLoading(true);
       const [clusterRes, resourcesRes, manifestsRes] = await Promise.all([
         api.getCluster(clusterId),
         api.getClusterResources(clusterId),
@@ -71,12 +71,16 @@ export const ClusterDetailView: React.FC<ClusterDetailViewProps> = ({ clusterId,
     } catch (err) {
       console.error('Error fetching cluster details:', err);
     } finally {
-      setLoading(false);
+      if (!isBackground) setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchDetails();
+    fetchDetails(false);
+    const interval = setInterval(() => {
+      fetchDetails(true);
+    }, 10000);
+    return () => clearInterval(interval);
   }, [clusterId]);
 
   const handleVerifyConnection = async (e: React.FormEvent) => {
@@ -306,7 +310,7 @@ export const ClusterDetailView: React.FC<ClusterDetailViewProps> = ({ clusterId,
 
         <div>
           <span className="text-zinc-500 block uppercase text-[10px]">Kubernetes Version</span>
-          <span className="text-zinc-200 font-semibold block mt-1">{cluster.k8sVersion || 'v1.31.2'}</span>
+          <span className="text-zinc-200 font-semibold block mt-1">{cluster.k8sVersion || (cluster.agentStatus === 'CONNECTED' ? 'Detecting...' : '—')}</span>
         </div>
 
         <div>

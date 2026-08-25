@@ -18,6 +18,7 @@ import {
   TimelineEvent,
   User
 } from '../src/types/index';
+import { AGENT_VERSION } from '../src/config/version';
 import { IncidentDetector } from './engine/detector';
 import { generateIncidentFingerprint } from './engine/fingerprint';
 
@@ -496,7 +497,7 @@ class DataStore {
 
   public recordAgentHeartbeat(
     clusterId: string,
-    agentVersion: string,
+    agentVersion?: string,
     k8sVersion?: string,
     nodeCount?: number,
     podCount?: number
@@ -509,25 +510,39 @@ class DataStore {
     cluster.lastHeartbeatAt = now;
     cluster.lastSeenAt = now;
     cluster.connectedAt = cluster.connectedAt || now;
-    if (agentVersion) cluster.agentVersion = agentVersion;
-    if (k8sVersion) cluster.k8sVersion = k8sVersion;
+    if (agentVersion && agentVersion.trim() !== '') {
+      cluster.agentVersion = agentVersion;
+    }
+
+    // Preserve real live Kubernetes version; reject outdated dummy fallback v1.31.2 if real version exists
+    if (k8sVersion && k8sVersion.trim() !== '' && k8sVersion !== 'v1.31.2') {
+      cluster.k8sVersion = k8sVersion;
+    } else if (k8sVersion && !cluster.k8sVersion) {
+      cluster.k8sVersion = k8sVersion;
+    }
+
+    const existingResources = this.resources.get(clusterId) || [];
+    const calculatedNodes = existingResources.filter((r) => r.kind === 'Node').length;
+    const calculatedPods = existingResources.filter((r) => r.kind === 'Pod').length;
+
     if (typeof nodeCount === 'number' && nodeCount > 0) {
       cluster.nodeCount = nodeCount;
-    } else {
-      const existingResources = this.resources.get(clusterId) || [];
-      const calculatedNodes = existingResources.filter((r) => r.kind === 'Node').length;
-      if (calculatedNodes > 0 || cluster.nodeCount === undefined) {
-        cluster.nodeCount = calculatedNodes;
-      }
+    } else if (calculatedNodes > 0 || cluster.nodeCount === undefined) {
+      cluster.nodeCount = calculatedNodes;
     }
 
     if (typeof podCount === 'number' && podCount > 0) {
       cluster.podCount = podCount;
-    } else {
-      const existingResources = this.resources.get(clusterId) || [];
-      const calculatedPods = existingResources.filter((r) => r.kind === 'Pod').length;
-      if (calculatedPods > 0 || cluster.podCount === undefined) {
-        cluster.podCount = calculatedPods;
+    } else if (calculatedPods > 0 || cluster.podCount === undefined) {
+      cluster.podCount = calculatedPods;
+    }
+
+    // Derive K8s version from Node resources if cluster version is still missing or outdated
+    if ((!cluster.k8sVersion || cluster.k8sVersion === 'v1.31.2') && calculatedNodes > 0) {
+      const firstNode = existingResources.find((r) => r.kind === 'Node');
+      const kubeletVer = (firstNode?.statusSummary?.kubeletVersion as string) || (firstNode?.specSummary?.kubeletVersion as string);
+      if (kubeletVer) {
+        cluster.k8sVersion = kubeletVer;
       }
     }
 
@@ -562,6 +577,15 @@ class DataStore {
     const pods = incomingResources.filter((r) => r.kind === 'Pod');
     cluster.nodeCount = nodes.length;
     cluster.podCount = pods.length;
+
+    // Detect K8s Version from Node telemetry if present
+    if (nodes.length > 0) {
+      const firstNode = nodes[0];
+      const kubeletVer = (firstNode.statusSummary?.kubeletVersion as string) || (firstNode.specSummary?.kubeletVersion as string);
+      if (kubeletVer) {
+        cluster.k8sVersion = kubeletVer;
+      }
+    }
 
     // Run deterministic incident detection & auto-recovery on each resource
     for (const res of incomingResources) {
@@ -989,7 +1013,7 @@ class DataStore {
     if (!cluster) return { success: false, message: 'Cluster not found' };
 
     // Ensure cluster is connected
-    this.recordAgentHeartbeat(clusterId, 'v1.4.2', 'v1.31.2', 3, 24);
+    this.recordAgentHeartbeat(clusterId, AGENT_VERSION, cluster.k8sVersion || 'v1.35.1', cluster.nodeCount || 2, cluster.podCount || 10);
 
     let resources = this.resources.get(clusterId) || [];
 
@@ -1206,7 +1230,7 @@ class DataStore {
         health: 'CRITICAL',
         createdAt: Date.now() - 86400000 * 7,
         updatedAt: Date.now(),
-        specSummary: { osImage: 'Ubuntu 22.04.4 LTS', kernelVersion: '5.15.0-105-generic', kubeletVersion: 'v1.31.2' },
+        specSummary: { osImage: 'Ubuntu 22.04.4 LTS', kernelVersion: '5.15.0-105-generic', kubeletVersion: 'v1.35.1' },
         statusSummary: { capacityCpu: '16', capacityMemory: '64Gi', allocatableCpu: '15.6', allocatableMemory: '60Gi' },
         conditions: [
           {

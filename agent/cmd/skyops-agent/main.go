@@ -75,10 +75,24 @@ func main() {
 	telemetryQueue := queue.NewBoundedQueue(cfg.QueueCapacity)
 	transportClient := transport.NewClient(cfg)
 
+	// Probe Kubernetes API client and server version if in-cluster
+	kClient, kErr := collector.NewInClusterK8sClient()
+	liveK8sVersion := ""
+	if kErr != nil {
+		slog.Warn("In-cluster Kubernetes client initialization notice", "reason", kErr.Error())
+	} else {
+		probeCtx, probeCancel := context.WithTimeout(ctx, 5*time.Second)
+		if ver, verErr := kClient.GetServerVersion(probeCtx); verErr == nil && ver != "" {
+			liveK8sVersion = ver
+			slog.Info("Discovered Kubernetes API version", "version", liveK8sVersion)
+		}
+		probeCancel()
+	}
+
 	// Register Agent on startup
 	regPayload := transport.RegistrationPayload{
 		AgentVersion: cfg.AgentVersion,
-		K8sVersion:   "v1.31.2",
+		K8sVersion:   liveK8sVersion,
 	}
 
 	regResp, regErr := transportClient.RegisterAgent(ctx, regPayload)
@@ -92,11 +106,17 @@ func main() {
 	}
 
 	heartbeatService := heartbeat.NewService(cfg, transportClient)
-	resourceCollector := collector.NewCollector(cfg, transportClient, telemetryQueue)
+	if liveK8sVersion != "" {
+		heartbeatService.SetK8sVersion(liveK8sVersion)
+	}
+
+	resourceCollector := collector.NewCollector(cfg, transportClient, telemetryQueue, kClient)
+	resourceCollector.SetStateUpdater(heartbeatService)
 
 	// Start background routines
 	go heartbeatService.Start(ctx)
 	go resourceCollector.Start(ctx)
+
 
 	slog.Info("SkyOps Agent running in active observation mode")
 
