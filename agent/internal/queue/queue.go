@@ -57,6 +57,22 @@ func (q *BoundedQueue) PopAll() []Item {
 	return drained
 }
 
+// RequeueFront restores an undelivered batch. Fresh telemetry is preferred when
+// capacity is exhausted, but a transient transport failure never silently loses
+// the complete batch that was just collected.
+func (q *BoundedQueue) RequeueFront(items []Item) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(items) == 0 {
+		return
+	}
+	combined := append(append(make([]Item, 0, len(items)+len(q.items)), items...), q.items...)
+	if len(combined) > q.capacity {
+		combined = combined[:q.capacity]
+	}
+	q.items = combined
+}
+
 // Size returns current queued items
 func (q *BoundedQueue) Size() int {
 	q.mu.Lock()

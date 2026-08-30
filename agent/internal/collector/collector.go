@@ -642,6 +642,7 @@ func (c *Collector) flushQueue(ctx context.Context) {
 	}
 
 	if err := c.client.SendTelemetry(ctx, payload); err != nil {
+		c.queue.RequeueFront(items)
 		slog.Warn("Failed to dispatch telemetry batch", "error", err, "itemCount", len(items))
 	} else {
 		slog.Info("Dispatched telemetry batch", "itemCount", len(items), "clusterId", c.cfg.ClusterID)

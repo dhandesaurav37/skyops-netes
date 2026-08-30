@@ -88,6 +88,15 @@ export class IncidentDetector {
 
     // 2. Check for ImagePullBackOff / ErrImagePull / Image errors
     for (const c of containers) {
+      if (c.waitingReason === 'CreateContainerConfigError' || c.waitingReason === 'CreateContainerError') {
+        return {
+          detected: true,
+          incidentType: c.waitingReason,
+          title: `Container creation failed in pod ${resource.name} (${c.waitingReason}: ${c.name})`,
+          severity: 'HIGH',
+          technicalDetails: { podName: resource.name, containerName: c.name, image: c.image, reason: c.waitingReason, message: c.waitingMessage || `Kubernetes could not create container ${c.name}`, nodeName: String(resource.specSummary?.nodeName || 'unknown'), containers, conditions: resource.conditions, events }
+        };
+      }
       const isImageError =
         c.waitingReason === 'ImagePullBackOff' ||
         c.waitingReason === 'ErrImagePull' ||
@@ -97,9 +106,10 @@ export class IncidentDetector {
         resource.status === 'InvalidImageName';
 
       if (isImageError) {
+        const incidentType = c.waitingReason === 'ErrImagePull' ? 'ErrImagePull' : c.waitingReason === 'InvalidImageName' ? 'InvalidImageName' : 'ImagePullBackOff';
         return {
           detected: true,
-          incidentType: 'ImagePullBackOff',
+          incidentType,
           title: `Image pull failure in pod ${resource.name} (${c.waitingReason || resource.status}: ${c.name})`,
           severity: 'HIGH',
           technicalDetails: {
@@ -474,6 +484,9 @@ export class IncidentDetector {
       case 'CrashLoopBackOff':
       case 'ImagePullBackOff':
       case 'ErrImagePull':
+      case 'InvalidImageName':
+      case 'CreateContainerConfigError':
+      case 'CreateContainerError':
       case 'OOMKilled':
       case 'PodFailed': {
         const containers = resource.containers || [];
