@@ -13,6 +13,7 @@ import {
   requireUserAuth
 } from './server/auth';
 import { generateHelmCommand, generateKubernetesManifest } from './server/manifestGenerator';
+import { normalizeTelemetry } from './server/normalization';
 import { store } from './server/store';
 import { AGENT_DEFAULT_NAMESPACE, AGENT_VERSION } from './src/config/version';
 import { KubernetesResource } from './src/types/index';
@@ -607,9 +608,13 @@ app.post('/api/v1/agent/telemetry', requireAgentAuth, (req: AuthenticatedAgentRe
     }
   }
 
-  if (extractedResources.length > 0) {
-    store.syncClusterResources(req.clusterId!, extractedResources);
-  }
+  // The authenticated token, never a client-provided clusterId, defines resource ownership.
+  const normalized = normalizeTelemetry(req.body, req.clusterId!);
+  if (normalized === null) return res.status(400).json({ error: 'Telemetry must contain resources or items arrays' });
+  extractedResources = normalized;
+  // Only a collector that explicitly confirms a complete snapshot may cause
+  // deletion reconciliation. Older agents retain backwards-compatible updates.
+  store.syncClusterResources(req.clusterId!, extractedResources, req.body?.snapshotComplete === true);
 
   const cluster = store.getClusterByIdInternal(req.clusterId!);
   console.log(

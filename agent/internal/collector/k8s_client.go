@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -297,7 +296,7 @@ type K8sEventList struct {
 }
 
 type K8sEvent struct {
-	Metadata K8sObjectMeta `json:"metadata"`
+	Metadata       K8sObjectMeta `json:"metadata"`
 	InvolvedObject struct {
 		Kind      string `json:"kind"`
 		Namespace string `json:"namespace"`
@@ -312,4 +311,3 @@ type K8sEvent struct {
 	LastTimestamp  string `json:"lastTimestamp"`
 	EventTime      string `json:"eventTime"`
 }
-

@@ -61,3 +61,14 @@ func TestLoadFromEnv_MissingToken(t *testing.T) {
 		t.Fatal("expected error for missing SKYOPS_AGENT_TOKEN, got nil")
 	}
 }
+
+func TestLoadFromEnv_MissingServerURL(t *testing.T) {
+	os.Setenv("SKYOPS_CLUSTER_ID", "cls-test-123")
+	os.Setenv("SKYOPS_AGENT_TOKEN", "agt-token-secret")
+	os.Unsetenv("SKYOPS_SERVER_URL")
+	defer os.Unsetenv("SKYOPS_CLUSTER_ID")
+	defer os.Unsetenv("SKYOPS_AGENT_TOKEN")
+	if _, err := config.LoadFromEnv(); err == nil {
+		t.Fatal("expected error for missing SKYOPS_SERVER_URL, got nil")
+	}
+}

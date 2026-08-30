@@ -274,6 +274,7 @@ func (c *Collector) collectNodes(ctx context.Context, eventsMap map[string][]Eve
 		nodeEvents := eventsMap[fmt.Sprintf("Node//%s", node.Metadata.Name)]
 
 		results = append(results, ResourceObservation{
+			ID:        node.Metadata.UID,
 			Kind:      "Node",
 			Namespace: "",
 			Name:      node.Metadata.Name,
@@ -382,6 +383,7 @@ func (c *Collector) collectPods(ctx context.Context, eventsMap map[string][]Even
 		podEvents := eventsMap[fmt.Sprintf("Pod/%s/%s", pod.Metadata.Namespace, pod.Metadata.Name)]
 
 		results = append(results, ResourceObservation{
+			ID:        pod.Metadata.UID,
 			Kind:      "Pod",
 			Namespace: pod.Metadata.Namespace,
 			Name:      pod.Metadata.Name,
@@ -447,6 +449,7 @@ func (c *Collector) collectDeployments(ctx context.Context, eventsMap map[string
 		depEvents := eventsMap[fmt.Sprintf("Deployment/%s/%s", dep.Metadata.Namespace, dep.Metadata.Name)]
 
 		results = append(results, ResourceObservation{
+			ID:        dep.Metadata.UID,
 			Kind:      "Deployment",
 			Namespace: dep.Metadata.Namespace,
 			Name:      dep.Metadata.Name,
@@ -502,6 +505,7 @@ func (c *Collector) collectStatefulSets(ctx context.Context, eventsMap map[strin
 		ssEvents := eventsMap[fmt.Sprintf("StatefulSet/%s/%s", ss.Metadata.Namespace, ss.Metadata.Name)]
 
 		results = append(results, ResourceObservation{
+			ID:        ss.Metadata.UID,
 			Kind:      "StatefulSet",
 			Namespace: ss.Metadata.Namespace,
 			Name:      ss.Metadata.Name,
@@ -555,6 +559,7 @@ func (c *Collector) collectDaemonSets(ctx context.Context, eventsMap map[string]
 		dsEvents := eventsMap[fmt.Sprintf("DaemonSet/%s/%s", ds.Metadata.Namespace, ds.Metadata.Name)]
 
 		results = append(results, ResourceObservation{
+			ID:        ds.Metadata.UID,
 			Kind:      "DaemonSet",
 			Namespace: ds.Metadata.Namespace,
 			Name:      ds.Metadata.Name,
@@ -605,6 +610,7 @@ func (c *Collector) collectPVCs(ctx context.Context, eventsMap map[string][]Even
 		pvcEvents := eventsMap[fmt.Sprintf("PersistentVolumeClaim/%s/%s", pvc.Metadata.Namespace, pvc.Metadata.Name)]
 
 		results = append(results, ResourceObservation{
+			ID:        pvc.Metadata.UID,
 			Kind:      "PersistentVolumeClaim",
 			Namespace: pvc.Metadata.Namespace,
 			Name:      pvc.Metadata.Name,
@@ -639,9 +645,14 @@ func (c *Collector) flushQueue(ctx context.Context) {
 		"clusterId": c.cfg.ClusterID,
 		"timestamp": time.Now().UnixMilli(),
 		"items":     items,
+		// The current collector only marks a snapshot complete after successful
+		// collection support is available for every resource kind. This prevents
+		// the server from mistaking a transient partial scrape for deletion.
+		"snapshotComplete": false,
 	}
 
 	if err := c.client.SendTelemetry(ctx, payload); err != nil {
+		c.queue.RequeueFront(items)
 		slog.Warn("Failed to dispatch telemetry batch", "error", err, "itemCount", len(items))
 	} else {
 		slog.Info("Dispatched telemetry batch", "itemCount", len(items), "clusterId", c.cfg.ClusterID)
