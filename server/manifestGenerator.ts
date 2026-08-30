@@ -55,7 +55,7 @@ while true; do
 
   # Dispatch telemetry payload directly to SkyOps Central Ingestion API
   if [ "$PAYLOAD_VALID" = "true" ] && command -v curl >/dev/null 2>&1; then
-    HTTP_CODE=$(curl -k -s -S -o "$RESP_FILE" -w "%{http_code}" -X POST "$SERVER/api/v1/agent/telemetry" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" --data-binary @"$PAYLOAD" 2>"$ERR_FILE")
+    HTTP_CODE=$(curl --fail-with-body -s -S --connect-timeout 5 --max-time 20 -o "$RESP_FILE" -w "%{http_code}" -X POST "$SERVER/api/v1/agent/telemetry" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" --data-binary @"$PAYLOAD" 2>"$ERR_FILE")
     CURL_EXIT=$?
     RESP_BODY=$(cat "$RESP_FILE" 2>/dev/null)
 
@@ -73,7 +73,7 @@ while true; do
       echo "[SkyOps Collector $(date -u +%T)] Telemetry network error (exit $CURL_EXIT): $ERR_MSG"
     fi
 
-    curl -k -s -X POST "$SERVER/api/v1/agent/heartbeat" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "{\\"clusterId\\":\\"$CID\\",\\"agentVersion\\":\\"v1.5.0\\"}" >/dev/null 2>&1 || true
+    curl --fail-with-body -s -S --connect-timeout 5 --max-time 20 -X POST "$SERVER/api/v1/agent/heartbeat" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "{\\"agentVersion\\":\\"$AGENT_VERSION\\"}" >/dev/null 2>&1 || true
   fi
 
   rm -f "$PAYLOAD" "$RESP_FILE" "$ERR_FILE"
@@ -260,10 +260,6 @@ done`;
                         fieldPath: 'spec.nodeName',
                       },
                     },
-                  },
-                  {
-                    name: 'KUBERNETES_INSECURE_SKIP_TLS_VERIFY',
-                    value: 'true',
                   },
                 ],
                 resources: {

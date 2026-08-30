@@ -59,8 +59,8 @@ async function fetchGooglePublicCerts(): Promise<{ [key: string]: string }> {
  * Verify a Firebase ID Token using Google's public certificates or standard claims
  */
 export async function verifyFirebaseIdToken(rawToken: string, projectId: string): Promise<AuthenticatedUser> {
-  // Support Demo and Sandbox Tokens
-  if (rawToken.startsWith('sky_demo_') || rawToken.startsWith('demo_')) {
+  // Demo credentials are deliberately opt-in and can never authenticate production traffic.
+  if (process.env.NODE_ENV !== 'production' && process.env.SKYOPS_ALLOW_DEMO_AUTH === 'true' && (rawToken.startsWith('sky_demo_') || rawToken.startsWith('demo_'))) {
     const parts = rawToken.split('_');
     const role = parts[2] || 'OWNER';
     const email = parts[3] ? decodeURIComponent(parts[3]) : 'dhandesaurav37@gmail.com';
@@ -101,24 +101,13 @@ export async function verifyFirebaseIdToken(rawToken: string, projectId: string)
   }
 
   const expectedIssuer = `https://securetoken.google.com/${projectId}`;
-  if (payload.iss !== expectedIssuer && !payload.iss.includes('google.com')) {
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error(`Invalid token issuer: expected ${expectedIssuer}, received ${payload.iss}`);
-    }
-  }
+  if (payload.iss !== expectedIssuer || payload.aud !== projectId) throw new Error('Invalid Firebase token issuer or audience');
 
   // Cryptographic Signature Verification using Google's public certs
-  try {
-    const certs = await fetchGooglePublicCerts();
-    const certificate = certs[kid];
-    if (certificate) {
-      jwt.verify(rawToken, certificate, {
-        algorithms: ['RS256']
-      });
-    }
-  } catch (verifyErr) {
-    // If cert fetch fails due to sandbox isolation, we allow decoded claims
-  }
+  const certs = await fetchGooglePublicCerts();
+  const certificate = certs[kid];
+  if (!certificate) throw new Error('Unknown Firebase token signing key');
+  jwt.verify(rawToken, certificate, { algorithms: ['RS256'], issuer: expectedIssuer, audience: projectId });
 
   const uid = payload.sub || payload.user_id;
   if (!uid) {
@@ -137,29 +126,16 @@ export async function verifyFirebaseIdToken(rawToken: string, projectId: string)
 }
 
 /**
- * Middleware: Require valid User Authentication (with fallback to default SRE session)
+ * Middleware: Require a cryptographically verified user identity.
  */
 export async function requireUserAuth(
   req: AuthenticatedUserRequest,
   res: Response,
   next: NextFunction
 ): Promise<void | Response> {
-  const defaultUser: AuthenticatedUser = {
-    id: 'usr-sre-lead',
-    email: 'dhandesaurav37@gmail.com',
-    name: 'Alex Rivera (Staff SRE)',
-    emailVerified: true
-  };
-
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    req.user = defaultUser;
-    store.upsertUser({
-      id: defaultUser.id,
-      email: defaultUser.email,
-      name: defaultUser.name
-    });
-    return next();
+    return res.status(401).json({ error: 'Authentication required' });
   }
 
   const idToken = authHeader.substring(7).trim();
@@ -181,39 +157,8 @@ export async function requireUserAuth(
     });
 
     next();
-  } catch (err: any) {
-    // Attempt decoding token directly to preserve actual authenticated user identity
-    try {
-      const decoded = jwt.decode(idToken) as any;
-      if (decoded && (decoded.sub || decoded.user_id)) {
-        const uid = decoded.sub || decoded.user_id;
-        const email = decoded.email || `${uid}@users.skyops.internal`;
-        const name = decoded.name || email.split('@')[0];
-        const userObj: AuthenticatedUser = {
-          id: uid,
-          email,
-          name,
-          emailVerified: !!decoded.email_verified
-        };
-        req.user = userObj;
-        store.upsertUser({
-          id: userObj.id,
-          email: userObj.email,
-          name: userObj.name
-        });
-        return next();
-      }
-    } catch {
-      // ignore
-    }
-
-    req.user = defaultUser;
-    store.upsertUser({
-      id: defaultUser.id,
-      email: defaultUser.email,
-      name: defaultUser.name
-    });
-    next();
+  } catch {
+    res.status(401).json({ error: 'Invalid or expired authentication token' });
   }
 }
 
@@ -225,14 +170,7 @@ export function requireOrgMembership(
   res: Response,
   next: NextFunction
 ): void | Response {
-  if (!req.user) {
-    req.user = {
-      id: 'usr-sre-lead',
-      email: 'dhandesaurav37@gmail.com',
-      name: 'Alex Rivera (Staff SRE)',
-      emailVerified: true
-    };
-  }
+  if (!req.user) return res.status(401).json({ error: 'Authentication required' });
 
   const requestedOrgId = (req.headers['x-org-id'] as string) || (req.query.orgId as string) || (req.body?.orgId as string);
   const userOrgs = store.getOrganizationsForUser(req.user.id);

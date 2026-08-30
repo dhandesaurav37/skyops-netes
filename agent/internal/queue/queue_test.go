@@ -41,3 +41,13 @@ func TestBoundedQueue_PushAndPopAll(t *testing.T) {
 		t.Errorf("expected queue size 0 after PopAll, got %d", q.Size())
 	}
 }
+
+func TestBoundedQueue_RequeueFront(t *testing.T) {
+	q := queue.NewBoundedQueue(3)
+	q.Push(queue.Item{Type: "new"})
+	q.RequeueFront([]queue.Item{{Type: "retry-a"}, {Type: "retry-b"}})
+	items := q.PopAll()
+	if len(items) != 3 || items[0].Type != "retry-a" || items[1].Type != "retry-b" || items[2].Type != "new" {
+		t.Fatalf("unexpected requeued order: %#v", items)
+	}
+}
