@@ -353,7 +353,7 @@ export const IncidentDetailView: React.FC<IncidentDetailViewProps> = ({
               <CheckCircle2 className="w-3 h-3" />
               Recommended Action
             </span>
-            <p className="text-zinc-200 text-xs leading-relaxed">{tech.recommendation || 'Inspect pod logs and manifest configuration.'}</p>
+            <p className="text-zinc-200 text-xs leading-relaxed">{tech.recommendedAction || tech.recommendation || 'Inspect pod logs and manifest configuration.'}</p>
           </div>
         </div>
       </div>
@@ -378,6 +378,11 @@ export const IncidentDetailView: React.FC<IncidentDetailViewProps> = ({
               <div className="p-3 bg-zinc-950 rounded-lg border border-zinc-800/70">
                 <span className="text-zinc-500 text-[10px] block uppercase">Incident Classification</span>
                 <span className="text-zinc-200 font-semibold">{incident.incidentType}</span>
+              </div>
+
+              <div className="p-3 bg-zinc-950 rounded-lg border border-zinc-800/70">
+                <span className="text-zinc-500 text-[10px] block uppercase">RCA Category / Confidence</span>
+                <span className="text-zinc-200 font-semibold">{tech.rootCauseCategory || 'UNDETERMINED'} / {tech.confidence || 'LOW'}</span>
               </div>
 
               <div className="p-3 bg-zinc-950 rounded-lg border border-zinc-800/70">
@@ -430,6 +435,20 @@ export const IncidentDetailView: React.FC<IncidentDetailViewProps> = ({
                 <span className="font-bold">{formatDuration(incident.firstSeenAt, incident.resolvedAt)}</span>
               </div>
             )}
+          </div>
+
+          {/* Rule-based RCA uses already collected Kubernetes status and events. */}
+          <div className="p-5 rounded-xl bg-zinc-900/50 border border-zinc-800/80 space-y-4 shadow-xs">
+            <h3 className="text-xs font-bold text-zinc-200 font-mono uppercase tracking-wider flex items-center gap-2 border-b border-zinc-800/80 pb-3">
+              <Shield className="w-4 h-4 text-emerald-400" />
+              Root Cause Intelligence
+            </h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              <div className="p-3 bg-zinc-950 rounded-lg border border-zinc-800/70"><span className="text-zinc-500 text-[10px] block uppercase">Root Cause</span><p className="text-zinc-200 mt-1">{tech.rootCause || 'Root cause undetermined'}</p></div>
+              <div className="p-3 bg-zinc-950 rounded-lg border border-zinc-800/70"><span className="text-zinc-500 text-[10px] block uppercase">Impact</span><p className="text-zinc-200 mt-1">{tech.impact || 'Impact is still being determined.'}</p></div>
+              <div className="p-3 bg-zinc-950 rounded-lg border border-zinc-800/70 sm:col-span-2"><span className="text-zinc-500 text-[10px] block uppercase">Recommended Action</span><p className="text-zinc-200 mt-1">{tech.recommendedAction || tech.recommendation || 'Inspect current Kubernetes status and events.'}</p></div>
+            </div>
+            <div><span className="text-zinc-500 text-[10px] block uppercase mb-2">Evidence</span><ul className="space-y-1.5 text-xs text-zinc-300">{(tech.evidence || []).map((item, index) => <li key={index} className="flex gap-2"><span className="text-sky-400">•</span><span>{item.message}</span></li>)}</ul></div>
           </div>
 
           {/* Section 2: Kubernetes Target Infrastructure */}

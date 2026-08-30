@@ -11,7 +11,13 @@ function pod(overrides: Partial<KubernetesResource> = {}): KubernetesResource {
 test('investigates image pull errors from current container state', () => {
   const result = IncidentDetector.evaluateResource(pod({ status: 'ImagePullBackOff', health: 'CRITICAL', conditions: [{ type: 'Ready', status: 'False' }], containers: [{ name: 'app', image: 'nginx:no-such-tag', restartCount: 0, ready: false, state: 'waiting', waitingReason: 'ImagePullBackOff', waitingMessage: 'failed to resolve image: not found' }] }));
   assert.equal(result?.incidentType, 'ImagePullBackOff'); assert.equal(result?.severity, 'HIGH');
-  assert.equal(result?.technicalDetails.rootCause, 'Container image cannot be resolved or pulled by the runtime.'); assert.equal(result?.technicalDetails.confidence, 'HIGH');
+  assert.equal(result?.technicalDetails.rootCauseCategory, 'IMAGE_PULL'); assert.equal(result?.technicalDetails.rootCause, 'The configured container image/tag could not be found in the container registry.'); assert.equal(result?.technicalDetails.confidence, 'HIGH');
+});
+
+test('classifies registry authentication image failures separately', () => {
+  const result = IncidentDetector.evaluateResource(pod({ status: 'ImagePullBackOff', containers: [{ name: 'app', image: 'private/app:v1', restartCount: 0, ready: false, state: 'waiting', waitingReason: 'ImagePullBackOff', waitingMessage: 'pull access denied: authentication required (401 Unauthorized)' }] }));
+  assert.equal(result?.technicalDetails.rootCauseCategory, 'REGISTRY_AUTH');
+  assert.equal(result?.technicalDetails.rootCause, 'Container registry authentication failure.');
 });
 
 for (const reason of ['ErrImagePull', 'InvalidImageName'] as const) test(`detects ${reason}`, () => {
@@ -21,8 +27,26 @@ for (const reason of ['ErrImagePull', 'InvalidImageName'] as const) test(`detect
 });
 
 test('detects crash loop and OOMKilled', () => {
-  assert.equal(IncidentDetector.evaluateResource(pod({ status: 'CrashLoopBackOff', containers: [{ name: 'app', image: 'x', restartCount: 8, ready: false, state: 'waiting', waitingReason: 'CrashLoopBackOff' }] }))?.incidentType, 'CrashLoopBackOff');
+  const crash = IncidentDetector.evaluateResource(pod({ status: 'CrashLoopBackOff', containers: [{ name: 'app', image: 'x', restartCount: 8, ready: false, state: 'waiting', waitingReason: 'CrashLoopBackOff', exitCode: 2, lastTerminationReason: 'Error' }] }));
+  assert.equal(crash?.incidentType, 'CrashLoopBackOff'); assert.equal(crash?.technicalDetails.rootCauseCategory, 'CRASH'); assert.equal(crash?.technicalDetails.exitCode, 2);
   assert.equal(IncidentDetector.evaluateResource(pod({ containers: [{ name: 'app', image: 'x', restartCount: 1, ready: false, state: 'terminated', terminationReason: 'OOMKilled', exitCode: 137 }] }))?.incidentType, 'OOMKilled');
+});
+
+test('does not infer a crash loop from a generic BackOff event', () => {
+  const result = IncidentDetector.evaluateResource(pod({ status: 'Pending', health: 'WARNING', conditions: [{ type: 'Ready', status: 'False' }], containers: [{ name: 'app', image: 'x', restartCount: 0, ready: false, state: 'waiting' }], events: [{ id: 'backoff', timestamp: now, type: 'Warning', reason: 'BackOff', objectKind: 'Pod', objectName: 'workload', namespace: 'default', message: 'Back-off pulling image x' }] }));
+  assert.equal(result, null);
+});
+
+test('classifies PVC StorageClass and first-consumer states without conflating them', () => {
+  const missing = IncidentDetector.evaluateResource({ ...pod(), kind: 'PersistentVolumeClaim', name: 'data', status: 'Pending', containers: [], events: [{ id: 'missing', timestamp: now, type: 'Warning', reason: 'ProvisioningFailed', objectKind: 'PersistentVolumeClaim', objectName: 'data', namespace: 'default', message: 'storageclass.storage.k8s.io "fast" not found' }] });
+  const waiting = IncidentDetector.evaluateResource({ ...pod(), kind: 'PersistentVolumeClaim', name: 'data-waiting', status: 'Pending', containers: [], events: [{ id: 'wait', timestamp: now, type: 'Normal', reason: 'WaitForFirstConsumer', objectKind: 'PersistentVolumeClaim', objectName: 'data-waiting', namespace: 'default', message: 'waiting for first consumer to be created before binding' }] });
+  assert.equal(missing?.technicalDetails.rootCauseCategory, 'STORAGE_CLASS');
+  assert.equal(waiting?.technicalDetails.rootCauseCategory, 'WAITING_FOR_CONSUMER');
+});
+
+test('classifies Pending pods using scheduling evidence', () => {
+  const result = IncidentDetector.evaluateResource(pod({ status: 'Pending', health: 'WARNING', conditions: [{ type: 'PodScheduled', status: 'False' }], containers: [], events: [{ id: 'scheduled', timestamp: now, type: 'Warning', reason: 'FailedScheduling', objectKind: 'Pod', objectName: 'workload', namespace: 'default', message: '0/3 nodes are available: 3 Insufficient cpu.' }] }));
+  assert.equal(result?.incidentType, 'PodSchedulingFailed'); assert.equal(result?.technicalDetails.rootCauseCategory, 'SCHEDULING');
 });
 
 test('does not turn Pending without evidence into an incident', () => {

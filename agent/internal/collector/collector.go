@@ -30,15 +30,18 @@ type ResourceObservation struct {
 }
 
 type ContainerStatus struct {
-	Name              string `json:"name"`
-	Image             string `json:"image"`
-	RestartCount      int    `json:"restartCount"`
-	Ready             bool   `json:"ready"`
-	State             string `json:"state"`
-	WaitingReason     string `json:"waitingReason,omitempty"`
-	WaitingMessage    string `json:"waitingMessage,omitempty"`
-	TerminationReason string `json:"terminationReason,omitempty"`
-	ExitCode          int    `json:"exitCode,omitempty"`
+	Name                  string `json:"name"`
+	Image                 string `json:"image"`
+	RestartCount          int    `json:"restartCount"`
+	Ready                 bool   `json:"ready"`
+	State                 string `json:"state"`
+	WaitingReason         string `json:"waitingReason,omitempty"`
+	WaitingMessage        string `json:"waitingMessage,omitempty"`
+	TerminationReason     string `json:"terminationReason,omitempty"`
+	ExitCode              int    `json:"exitCode,omitempty"`
+	LastTerminationReason string `json:"lastTerminationReason,omitempty"`
+	LastExitCode          int    `json:"lastExitCode,omitempty"`
+	MemoryLimit           string `json:"memoryLimit,omitempty"`
 }
 
 type ConditionStatus struct {
@@ -334,11 +337,19 @@ func (c *Collector) collectPods(ctx context.Context, eventsMap map[string][]Even
 		allReady := true
 
 		for _, cs := range pod.Status.ContainerStatuses {
+			memoryLimit := ""
+			for _, specContainer := range pod.Spec.Containers {
+				if specContainer.Name == cs.Name {
+					memoryLimit = specContainer.Resources.Limits["memory"]
+					break
+				}
+			}
 			cStat := ContainerStatus{
 				Name:         cs.Name,
 				Image:        cs.Image,
 				RestartCount: cs.RestartCount,
 				Ready:        cs.Ready,
+				MemoryLimit:  memoryLimit,
 			}
 
 			if !cs.Ready {
@@ -361,6 +372,10 @@ func (c *Collector) collectPods(ctx context.Context, eventsMap map[string][]Even
 				cStat.State = "terminated"
 				cStat.TerminationReason = cs.State.Terminated.Reason
 				cStat.ExitCode = cs.State.Terminated.ExitCode
+			}
+			if cs.LastState.Terminated != nil {
+				cStat.LastTerminationReason = cs.LastState.Terminated.Reason
+				cStat.LastExitCode = cs.LastState.Terminated.ExitCode
 			}
 
 			containers = append(containers, cStat)

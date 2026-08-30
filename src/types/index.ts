@@ -124,6 +124,8 @@ export interface ContainerDiagnostic {
   signal?: number;
   imageId?: string;
   lastTerminationReason?: string;
+  lastExitCode?: number;
+  memoryLimit?: string;
 }
 
 export interface ConditionDiagnostic {
@@ -157,8 +159,11 @@ export interface TechnicalDetails {
   resourceUid?: string;
   observedState?: string;
   rootCause?: string;
+  rootCauseCategory?: string;
   impact?: string;
   recommendation?: string;
+  /** Preferred explicit RCA action field; recommendation remains for stored legacy incidents. */
+  recommendedAction?: string;
   confidence?: 'LOW' | 'MEDIUM' | 'HIGH';
   relatedResources?: Array<{ kind: string; namespace: string; name: string; uid?: string; relationship: string }>;
   evidence?: Array<{ source: string; reason: string; message: string; timestamp?: number }>;

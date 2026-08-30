@@ -55,16 +55,37 @@ export class IncidentDetector {
   private static withInvestigation(resource: KubernetesResource, result: DetectionResult): DetectionResult {
     const details = result.technicalDetails;
     const message = String(details.message || 'No diagnostic message was provided by Kubernetes.');
+    const eventText = (resource.events || []).map(event => `${event.reason} ${event.message}`).join('\n');
+    const evidenceText = `${message}\n${eventText}`;
     let rootCause = 'Root cause undetermined';
+    let rootCauseCategory = 'UNDETERMINED';
     let confidence: 'LOW' | 'MEDIUM' | 'HIGH' = 'LOW';
     let recommendation = 'Inspect current Kubernetes events, resource status, and dependent resources before remediation.';
     if (result.incidentType === 'ImagePullBackOff' || result.incidentType === 'ErrImagePull' || result.incidentType === 'InvalidImageName') {
-      rootCause = /not found|manifest unknown|failed to resolve|pull access denied/i.test(message) ? 'Container image cannot be resolved or pulled by the runtime.' : 'Container image pull is failing; the exact registry cause is undetermined.';
-      confidence = /not found|manifest unknown|failed to resolve|pull access denied/i.test(message) ? 'HIGH' : 'MEDIUM'; recommendation = 'Verify the image repository and tag, registry reachability, and image-pull credentials.';
+      if (/401|unauthorized|authentication required|\bdenied\b|pull access denied/i.test(evidenceText)) {
+        rootCauseCategory = 'REGISTRY_AUTH'; rootCause = 'Container registry authentication failure.'; confidence = 'HIGH'; recommendation = 'Verify imagePullSecrets, registry credentials, and repository permissions.';
+      } else if (/notfound|not found|manifest unknown|failed to resolve|image not found/i.test(evidenceText)) {
+        rootCauseCategory = 'IMAGE_PULL'; rootCause = 'The configured container image/tag could not be found in the container registry.'; confidence = 'HIGH'; recommendation = 'Verify the container image repository and tag, then redeploy the workload with a valid image.';
+      } else { rootCauseCategory = 'IMAGE_PULL'; rootCause = 'Container image pull is failing; the exact registry cause is undetermined.'; confidence = 'MEDIUM'; recommendation = 'Verify the image repository and tag, registry reachability, and image-pull credentials.'; }
+    } else if (result.incidentType === 'OOMKilled') {
+      rootCauseCategory = 'OOM'; rootCause = 'Container exceeded its memory limit.'; confidence = 'HIGH'; recommendation = 'Review memory usage and increase the container memory limit only if appropriate.';
+    } else if (result.incidentType === 'CrashLoopBackOff') {
+      rootCauseCategory = 'CRASH'; rootCause = 'Container is repeatedly terminating with a non-zero exit code.'; confidence = 'HIGH'; recommendation = 'Inspect container logs and the application configuration, then correct the failing process before redeploying.';
+    } else if (result.incidentType === 'PVCPending') {
+      if (/storageclass(?:\.storage\.k8s\.io)? .*not found|storage class .*not found|storageclass.*does not exist/i.test(evidenceText)) { rootCauseCategory = 'STORAGE_CLASS'; rootCause = 'Referenced StorageClass does not exist.'; confidence = 'HIGH'; recommendation = 'Create the referenced StorageClass or update the PVC to use an available StorageClass.'; }
+      else if (/waitforfirstconsumer|waiting for first consumer|waiting for a pod to be scheduled/i.test(evidenceText)) { rootCauseCategory = 'WAITING_FOR_CONSUMER'; rootCause = 'PVC is waiting for a consuming pod before volume provisioning.'; confidence = 'HIGH'; recommendation = 'Schedule a consuming pod; provisioning will continue after the scheduler selects a node.'; }
+      else if (/provisioning failed|failed to provision|provisioner/i.test(evidenceText)) { rootCauseCategory = 'STORAGE_PROVISIONING'; rootCause = message; confidence = 'HIGH'; recommendation = 'Inspect the storage provisioner, StorageClass parameters, and the provider error before retrying.'; }
+    } else if (result.incidentType === 'PodSchedulingFailed') {
+      rootCauseCategory = 'SCHEDULING'; confidence = 'HIGH'; recommendation = 'Adjust workload requests or scheduling constraints, or add compatible cluster capacity.';
+      if (/insufficient cpu/i.test(evidenceText)) rootCause = 'Pod cannot be scheduled because the cluster has insufficient CPU.';
+      else if (/insufficient memory/i.test(evidenceText)) rootCause = 'Pod cannot be scheduled because the cluster has insufficient memory.';
+      else if (/node selector|didn.t match node selector/i.test(evidenceText)) rootCause = 'Pod node selector does not match any eligible node.';
+      else if (/taint|toleration/i.test(evidenceText)) rootCause = 'Pod cannot be scheduled because it does not tolerate an eligible node taint.';
+      else if (/affinity|anti-affinity/i.test(evidenceText)) rootCause = 'Pod affinity or anti-affinity constraints cannot be satisfied.';
     } else if (result.incidentType === 'ReadinessProbeFailed' || result.incidentType === 'LivenessProbeFailed' || result.incidentType === 'StartupProbeFailed') {
       rootCause = 'Probe failure is currently observed; application-level cause is undetermined.'; confidence = 'MEDIUM'; recommendation = 'Inspect the probe endpoint, container logs, and recent deployment changes.';
     } else if (result.incidentType === 'DeploymentDegraded') { rootCause = 'Deployment does not currently have the requested available replicas.'; confidence = 'HIGH'; recommendation = 'Inspect owned ReplicaSets and Pods to identify the blocking workload failure.'; }
-    return { ...result, technicalDetails: { ...details, resourceUid: resource.uid || resource.id, observedState: resource.status, rootCause, impact: result.severity === 'CRITICAL' || result.severity === 'HIGH' ? 'The affected workload or infrastructure component is unavailable or degraded.' : 'A localized component is degraded.', recommendation, confidence, relatedResources: (resource.ownerReferences || []).map(owner => ({ kind: owner.kind || 'Unknown', namespace: resource.namespace, name: owner.name || 'unknown', uid: owner.uid, relationship: 'owner' })), evidence: [{ source: 'kubernetes-status', reason: String(details.reason || result.incidentType), message }, ...(resource.events || []).slice(-5).map(event => ({ source: 'kubernetes-event', reason: event.reason, message: event.message, timestamp: event.timestamp }))] } };
+    return { ...result, technicalDetails: { ...details, resourceUid: resource.uid || resource.id, observedState: resource.status, rootCause, rootCauseCategory, impact: result.severity === 'CRITICAL' || result.severity === 'HIGH' ? 'The affected workload or infrastructure component is unavailable or degraded.' : 'A localized component is degraded.', recommendation, recommendedAction: recommendation, confidence, relatedResources: (resource.ownerReferences || []).map(owner => ({ kind: owner.kind || 'Unknown', namespace: resource.namespace, name: owner.name || 'unknown', uid: owner.uid, relationship: 'owner' })), evidence: [{ source: 'kubernetes-status', reason: String(details.reason || result.incidentType), message }, ...(resource.events || []).slice(-5).map(event => ({ source: 'kubernetes-event', reason: event.reason, message: event.message, timestamp: event.timestamp }))] } };
   }
 
   /**
@@ -74,14 +95,26 @@ export class IncidentDetector {
     const containers = resource.containers || [];
     const events = resource.events || [];
 
-    // 1. Check for CrashLoopBackOff or Container Error
+    // Image failures have precedence over generic BackOff wording in events.
     for (const c of containers) {
+      const isImageError = c.waitingReason === 'ImagePullBackOff' || c.waitingReason === 'ErrImagePull' || c.waitingReason === 'InvalidImageName' || resource.status === 'ImagePullBackOff' || resource.status === 'ErrImagePull' || resource.status === 'InvalidImageName';
+      if (isImageError) return this.imagePullResult(resource, c, containers, events);
+    }
+
+    // OOM termination is more specific than a crash loop.
+    for (const c of containers) {
+      if (c.terminationReason === 'OOMKilled' || c.lastTerminationReason === 'OOMKilled' || c.exitCode === 137 || c.lastExitCode === 137) {
+        return { detected: true, incidentType: 'OOMKilled', title: `Container ${c.name} in pod ${resource.name} was OOMKilled (Exit Code ${c.exitCode ?? c.lastExitCode ?? 137})`, severity: 'HIGH', technicalDetails: { podName: resource.name, containerName: c.name, image: c.image, restartCount: c.restartCount, exitCode: c.exitCode ?? c.lastExitCode ?? 137, reason: 'OOMKilled', message: `Container exceeded its memory limit${c.memoryLimit ? ` (${c.memoryLimit})` : ''} and was killed by the Linux OOM killer`, nodeName: String(resource.specSummary?.nodeName || 'unknown'), containers, conditions: resource.conditions, events } };
+      }
+    }
+
+    // CrashLoopBackOff requires actual repeated non-zero termination evidence; an event saying BackOff alone is insufficient.
+    for (const c of containers) {
+      const exitCode = c.exitCode ?? c.lastExitCode;
+      const terminationReason = c.terminationReason ?? c.lastTerminationReason;
       if (
-        c.waitingReason === 'CrashLoopBackOff' ||
-        (c.restartCount >= 1 && (c.state === 'waiting' || c.waitingReason === 'CrashLoopBackOff')) ||
-        (c.terminationReason === 'Error' && c.exitCode !== undefined && c.exitCode !== 0) ||
-        resource.status === 'CrashLoopBackOff' ||
-        resource.status === 'Error'
+        c.waitingReason === 'CrashLoopBackOff' && c.restartCount > 0 &&
+        exitCode !== undefined && exitCode !== 0 && terminationReason !== 'OOMKilled'
       ) {
         return {
           detected: true,
@@ -93,9 +126,9 @@ export class IncidentDetector {
             containerName: c.name,
             image: c.image,
             restartCount: c.restartCount,
-            exitCode: c.exitCode,
-            reason: c.waitingReason || c.terminationReason || 'CrashLoopBackOff',
-            message: c.waitingMessage || `Container ${c.name} is restarting repeatedly (exit code: ${c.exitCode ?? 'unknown'})`,
+            exitCode,
+            reason: terminationReason || c.waitingReason,
+            message: c.waitingMessage || `Container ${c.name} is restarting repeatedly (exit code: ${exitCode})`,
             nodeName: String(resource.specSummary?.nodeName || 'unknown'),
             containers,
             conditions: resource.conditions,
@@ -105,7 +138,7 @@ export class IncidentDetector {
       }
     }
 
-    // 2. Check for ImagePullBackOff / ErrImagePull / Image errors
+    // 2. Check for container creation errors
     for (const c of containers) {
       if (c.waitingReason === 'CreateContainerConfigError' || c.waitingReason === 'CreateContainerError') {
         return {
@@ -114,37 +147,6 @@ export class IncidentDetector {
           title: `Container creation failed in pod ${resource.name} (${c.waitingReason}: ${c.name})`,
           severity: 'HIGH',
           technicalDetails: { podName: resource.name, containerName: c.name, image: c.image, reason: c.waitingReason, message: c.waitingMessage || `Kubernetes could not create container ${c.name}`, nodeName: String(resource.specSummary?.nodeName || 'unknown'), containers, conditions: resource.conditions, events }
-        };
-      }
-      const isImageError =
-        c.waitingReason === 'ImagePullBackOff' ||
-        c.waitingReason === 'ErrImagePull' ||
-        c.waitingReason === 'InvalidImageName' ||
-        resource.status === 'ImagePullBackOff' ||
-        resource.status === 'ErrImagePull' ||
-        resource.status === 'InvalidImageName';
-
-      if (isImageError) {
-        // ErrImagePull normally transitions to ImagePullBackOff on the next
-        // kubelet retry. Keep one canonical incident fingerprint while retaining
-        // the exact current reason as evidence.
-        const incidentType: IncidentType = 'ImagePullBackOff';
-        return {
-          detected: true,
-          incidentType,
-          title: `Image pull failure in pod ${resource.name} (${c.waitingReason || resource.status}: ${c.name})`,
-          severity: 'HIGH',
-          technicalDetails: {
-            podName: resource.name,
-            containerName: c.name,
-            image: c.image,
-            reason: c.waitingReason || resource.status || 'ImagePullBackOff',
-            message: c.waitingMessage || `Failed to pull container image ${c.image}`,
-            nodeName: String(resource.specSummary?.nodeName || 'unknown'),
-            containers,
-            conditions: resource.conditions,
-            events
-          }
         };
       }
     }
@@ -168,48 +170,8 @@ export class IncidentDetector {
       };
     }
 
-    if (resource.status === 'CrashLoopBackOff' || resource.status === 'Error') {
-      return {
-        detected: true,
-        incidentType: 'CrashLoopBackOff',
-        title: `Pod ${resource.name} is failing / crashing`,
-        severity: 'MEDIUM',
-        technicalDetails: {
-          podName: resource.name,
-          reason: resource.status,
-          message: `Pod ${resource.name} container process exited with error status`,
-          nodeName: String(resource.specSummary?.nodeName || 'unknown'),
-          containers,
-          conditions: resource.conditions,
-          events
-        }
-      };
-    }
-
-    // 3. Check for OOMKilled
-    for (const c of containers) {
-      if (c.terminationReason === 'OOMKilled' || c.exitCode === 137) {
-        return {
-          detected: true,
-          incidentType: 'OOMKilled',
-          title: `Container ${c.name} in pod ${resource.name} was OOMKilled (Exit Code 137)`,
-          severity: 'HIGH',
-          technicalDetails: {
-            podName: resource.name,
-            containerName: c.name,
-            image: c.image,
-            restartCount: c.restartCount,
-            exitCode: 137,
-            reason: 'OOMKilled',
-            message: 'Container exceeded allocated memory limits and was killed by Linux OOM killer',
-            nodeName: String(resource.specSummary?.nodeName || 'unknown'),
-            containers,
-            conditions: resource.conditions,
-            events
-          }
-        };
-      }
-    }
+    const schedulingEvent = events.find(event => event.reason === 'FailedScheduling' && /insufficient cpu|insufficient memory|node selector|taint|toleration|affinity/i.test(event.message));
+    if (resource.status === 'Pending' && schedulingEvent) return { detected: true, incidentType: 'PodSchedulingFailed', title: `Pod ${resource.name} cannot be scheduled`, severity: 'MEDIUM', technicalDetails: { podName: resource.name, reason: schedulingEvent.reason, message: schedulingEvent.message, nodeName: String(resource.specSummary?.nodeName || 'unknown'), containers, conditions: resource.conditions, events } };
 
     // Events are historical. A warning alone is not a current outage: only raise
     // a probe incident when it is recent *and* the current PodReady condition is false.
@@ -272,6 +234,10 @@ export class IncidentDetector {
     }
 
     return null;
+  }
+
+  private static imagePullResult(resource: KubernetesResource, c: NonNullable<KubernetesResource['containers']>[number], containers: NonNullable<KubernetesResource['containers']>, events: NonNullable<KubernetesResource['events']>): DetectionResult {
+    return { detected: true, incidentType: 'ImagePullBackOff', title: `Image pull failure in pod ${resource.name} (${c.waitingReason || resource.status}: ${c.name})`, severity: 'HIGH', technicalDetails: { podName: resource.name, containerName: c.name, image: c.image, reason: c.waitingReason || resource.status || 'ImagePullBackOff', message: c.waitingMessage || `Failed to pull container image ${c.image}`, nodeName: String(resource.specSummary?.nodeName || 'unknown'), containers, conditions: resource.conditions, events } };
   }
 
   /**

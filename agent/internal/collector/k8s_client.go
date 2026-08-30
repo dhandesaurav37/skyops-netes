@@ -175,8 +175,11 @@ type K8sPod struct {
 	Spec     struct {
 		NodeName   string `json:"nodeName"`
 		Containers []struct {
-			Name  string `json:"name"`
-			Image string `json:"image"`
+			Name      string `json:"name"`
+			Image     string `json:"image"`
+			Resources struct {
+				Limits map[string]string `json:"limits"`
+			} `json:"resources"`
 		} `json:"containers"`
 	} `json:"spec"`
 	Status struct {
@@ -210,6 +213,12 @@ type K8sPod struct {
 					Message  string `json:"message"`
 				} `json:"terminated"`
 			} `json:"state"`
+			LastState struct {
+				Terminated *struct {
+					ExitCode int    `json:"exitCode"`
+					Reason   string `json:"reason"`
+				} `json:"terminated"`
+			} `json:"lastState"`
 		} `json:"containerStatuses"`
 	} `json:"status"`
 }

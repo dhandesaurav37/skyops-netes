@@ -166,6 +166,7 @@ test('DataStore Multi-Tenant & Agent Lifecycle Suite', async (t) => {
     assert.equal(incidentsAfterRecovery.length, 1);
     assert.equal(incidentsAfterRecovery[0].status, 'RESOLVED');
     assert.ok(incidentsAfterRecovery[0].resolvedAt);
+    assert.equal(incidentsAfterRecovery[0].technicalDetails.rootCauseCategory, 'CRASH', 'Recovery must preserve the RCA history');
 
     // 4. Recurrence: Same failure detected again after recovery -> occurrence increments to 2
     store.syncClusterResources(cluster.id, [failingPod]);
