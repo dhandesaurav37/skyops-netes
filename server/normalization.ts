@@ -19,7 +19,11 @@ function normalizeConditions(value: unknown): ConditionDiagnostic[] {
   }).filter(condition => condition.type.length > 0);
 }
 
-function normalizeContainers(value: unknown): ContainerDiagnostic[] {
+function normalizeContainers(value: unknown, specContainers: unknown[] = []): ContainerDiagnostic[] {
+  const limitsByName = new Map(asList(specContainers).map(item => {
+    const container = asObject(item); const resources = asObject(container.resources); const limits = asObject(resources.limits);
+    return [asString(container.name), asString(limits.memory)];
+  }));
   return asList(value).map(item => {
     const container = asObject(item); const state = asObject(container.state); const waiting = asObject(state.waiting); const terminated = asObject(state.terminated); const lastState = asObject(container.lastState); const lastTerminated = asObject(lastState.terminated);
     const suppliedState = asString(container.state);
@@ -32,7 +36,9 @@ function normalizeContainers(value: unknown): ContainerDiagnostic[] {
       terminationReason: asString(container.terminationReason, asString(terminated.reason)) || undefined,
       exitCode: typeof container.exitCode === 'number' ? container.exitCode : typeof terminated.exitCode === 'number' ? terminated.exitCode : undefined,
       signal: typeof terminated.signal === 'number' ? terminated.signal : undefined,
-      lastTerminationReason: asString(lastTerminated.reason) || undefined
+      lastTerminationReason: asString(container.lastTerminationReason, asString(lastTerminated.reason)) || undefined,
+      lastExitCode: typeof container.lastExitCode === 'number' ? container.lastExitCode : typeof lastTerminated.exitCode === 'number' ? lastTerminated.exitCode : undefined,
+      memoryLimit: asString(container.memoryLimit) || limitsByName.get(asString(container.name)) || undefined
     };
   });
 }
@@ -54,7 +60,7 @@ export function normalizeResource(value: unknown, authenticatedClusterId: string
   const spec = Object.keys(suppliedSpec).length > 0 ? suppliedSpec : asObject(raw.spec);
   const status = Object.keys(suppliedStatus).length > 0 ? suppliedStatus : asObject(raw.status);
   const conditions = normalizeConditions(raw.conditions ?? status.conditions);
-  const containers = normalizeContainers(asList(raw.containers).length > 0 ? raw.containers : [...asList(status.initContainerStatuses), ...asList(status.containerStatuses)]);
+  const containers = normalizeContainers(asList(raw.containers).length > 0 ? raw.containers : [...asList(status.initContainerStatuses), ...asList(status.containerStatuses)], asList(spec.containers));
   const phase = asString(status.phase, asString(raw.status, 'Unknown'));
   let displayStatus = phase || 'Unknown'; let health: KubernetesResource['health'] = raw.health === 'HEALTHY' || raw.health === 'WARNING' || raw.health === 'CRITICAL' ? raw.health : 'HEALTHY';
   if (kind === 'Pod') {
