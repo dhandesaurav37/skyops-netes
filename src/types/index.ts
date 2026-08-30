@@ -101,6 +101,13 @@ export type IncidentType =
   | 'PVCPending'
   | 'PVFailed'
   | 'StorageProvisioningFailed'
+  | 'ContainerTerminated'
+  | 'PodSchedulingFailed'
+  | 'PodPending'
+  | 'VolumeMountFailed'
+  | 'ServiceNoEndpoints'
+  | 'ServiceSelectorMismatch'
+  | 'NodeNetworkUnavailable'
   | 'MissingConfigMap'
   | 'MissingSecret';
 
@@ -114,6 +121,9 @@ export interface ContainerDiagnostic {
   waitingMessage?: string;
   terminationReason?: string;
   exitCode?: number;
+  signal?: number;
+  imageId?: string;
+  lastTerminationReason?: string;
 }
 
 export interface ConditionDiagnostic {
@@ -144,6 +154,14 @@ export interface TechnicalDetails {
   pvcPhase?: string;
   storageClass?: string;
   capacity?: string;
+  resourceUid?: string;
+  observedState?: string;
+  rootCause?: string;
+  impact?: string;
+  recommendation?: string;
+  confidence?: 'LOW' | 'MEDIUM' | 'HIGH';
+  relatedResources?: Array<{ kind: string; namespace: string; name: string; uid?: string; relationship: string }>;
+  evidence?: Array<{ source: string; reason: string; message: string; timestamp?: number }>;
 }
 
 export interface Incident {
@@ -233,6 +251,9 @@ export interface KubernetesResource {
   conditions?: ConditionDiagnostic[];
   containers?: ContainerDiagnostic[];
   events?: K8sEvent[];
+  uid?: string;
+  apiVersion?: string;
+  ownerReferences?: Array<{ uid?: string; kind?: string; name?: string; controller?: boolean }>;
 }
 
 export interface OverviewMetrics {

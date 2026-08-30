@@ -566,7 +566,7 @@ class DataStore {
     return true;
   }
 
-  public syncClusterResources(clusterId: string, incomingResources: KubernetesResource[]): void {
+  public syncClusterResources(clusterId: string, incomingResources: KubernetesResource[], snapshotComplete = false): void {
     const cluster = this.clusters.get(clusterId);
     if (!cluster) return;
 
@@ -614,6 +614,16 @@ class DataStore {
               description: `Auto-resolved: ${recovery.reason}`
             });
           }
+        } else if (snapshotComplete) {
+          // A resource absent from an explicitly complete snapshot was deleted.
+          // Never infer deletion from a partial/failed scrape.
+          inc.status = 'RESOLVED';
+          inc.resolvedAt = Date.now();
+          inc.updatedAt = Date.now();
+          this.addTimelineEvent(inc.id, {
+            type: 'RECOVERY', actor: { type: 'AGENT', name: 'SkyOps Telemetry Engine' },
+            description: 'Auto-resolved: resource no longer exists in a complete Kubernetes snapshot'
+          });
         }
       }
     }
@@ -695,13 +705,16 @@ class DataStore {
           ...detection.technicalDetails
         };
 
-        // Record timeline occurrence event
-        this.addTimelineEvent(existingIncident.id, {
-          type: 'OCCURRENCE',
-          actor: { type: 'AGENT', name: 'SkyOps Agent' },
-          description: `Observed repeat failure condition #${existingIncident.occurrenceCount} for ${resource.kind} ${resource.name}`,
-          metadata: { occurrenceCount: existingIncident.occurrenceCount }
-        });
+        // Preserve the occurrence count on every pulse, but bound timeline noise
+        // to one repeat entry per five minutes.
+        const lastOccurrence = (this.incidentTimeline.get(existingIncident.id) || []).filter(event => event.type === 'OCCURRENCE').at(-1);
+        if (!lastOccurrence || Date.now() - lastOccurrence.timestamp >= 5 * 60 * 1000) {
+          this.addTimelineEvent(existingIncident.id, {
+            type: 'OCCURRENCE', actor: { type: 'AGENT', name: 'SkyOps Agent' },
+            description: `Observed repeat failure condition #${existingIncident.occurrenceCount} for ${resource.kind} ${resource.name}`,
+            metadata: { occurrenceCount: existingIncident.occurrenceCount }
+          });
+        }
 
         return existingIncident;
       }

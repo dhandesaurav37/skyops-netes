@@ -27,25 +27,44 @@ export class IncidentDetector {
    * Evaluate a single resource observation
    */
   public static evaluateResource(resource: KubernetesResource): DetectionResult | null {
+    let result: DetectionResult | null;
     switch (resource.kind) {
       case 'Pod':
-        return this.evaluatePod(resource);
+        result = this.evaluatePod(resource); break;
       case 'Node':
-        return this.evaluateNode(resource);
+        result = this.evaluateNode(resource); break;
       case 'Deployment':
-        return this.evaluateDeployment(resource);
+        result = this.evaluateDeployment(resource); break;
       case 'StatefulSet':
-        return this.evaluateStatefulSet(resource);
+        result = this.evaluateStatefulSet(resource); break;
       case 'DaemonSet':
-        return this.evaluateDaemonSet(resource);
+        result = this.evaluateDaemonSet(resource); break;
       case 'Job':
-        return this.evaluateJob(resource);
+        result = this.evaluateJob(resource); break;
       case 'PersistentVolumeClaim':
       case 'PVC':
-        return this.evaluatePVC(resource);
+        result = this.evaluatePVC(resource); break;
+      case 'Service':
+        result = this.evaluateService(resource); break;
       default:
-        return null;
+        result = null;
     }
+    return result ? this.withInvestigation(resource, result) : null;
+  }
+
+  private static withInvestigation(resource: KubernetesResource, result: DetectionResult): DetectionResult {
+    const details = result.technicalDetails;
+    const message = String(details.message || 'No diagnostic message was provided by Kubernetes.');
+    let rootCause = 'Root cause undetermined';
+    let confidence: 'LOW' | 'MEDIUM' | 'HIGH' = 'LOW';
+    let recommendation = 'Inspect current Kubernetes events, resource status, and dependent resources before remediation.';
+    if (result.incidentType === 'ImagePullBackOff' || result.incidentType === 'ErrImagePull' || result.incidentType === 'InvalidImageName') {
+      rootCause = /not found|manifest unknown|failed to resolve|pull access denied/i.test(message) ? 'Container image cannot be resolved or pulled by the runtime.' : 'Container image pull is failing; the exact registry cause is undetermined.';
+      confidence = /not found|manifest unknown|failed to resolve|pull access denied/i.test(message) ? 'HIGH' : 'MEDIUM'; recommendation = 'Verify the image repository and tag, registry reachability, and image-pull credentials.';
+    } else if (result.incidentType === 'ReadinessProbeFailed' || result.incidentType === 'LivenessProbeFailed' || result.incidentType === 'StartupProbeFailed') {
+      rootCause = 'Probe failure is currently observed; application-level cause is undetermined.'; confidence = 'MEDIUM'; recommendation = 'Inspect the probe endpoint, container logs, and recent deployment changes.';
+    } else if (result.incidentType === 'DeploymentDegraded') { rootCause = 'Deployment does not currently have the requested available replicas.'; confidence = 'HIGH'; recommendation = 'Inspect owned ReplicaSets and Pods to identify the blocking workload failure.'; }
+    return { ...result, technicalDetails: { ...details, resourceUid: resource.uid || resource.id, observedState: resource.status, rootCause, impact: result.severity === 'CRITICAL' || result.severity === 'HIGH' ? 'The affected workload or infrastructure component is unavailable or degraded.' : 'A localized component is degraded.', recommendation, confidence, relatedResources: (resource.ownerReferences || []).map(owner => ({ kind: owner.kind || 'Unknown', namespace: resource.namespace, name: owner.name || 'unknown', uid: owner.uid, relationship: 'owner' })), evidence: [{ source: 'kubernetes-status', reason: String(details.reason || result.incidentType), message }, ...(resource.events || []).slice(-5).map(event => ({ source: 'kubernetes-event', reason: event.reason, message: event.message, timestamp: event.timestamp }))] } };
   }
 
   /**
@@ -106,7 +125,10 @@ export class IncidentDetector {
         resource.status === 'InvalidImageName';
 
       if (isImageError) {
-        const incidentType = c.waitingReason === 'ErrImagePull' ? 'ErrImagePull' : c.waitingReason === 'InvalidImageName' ? 'InvalidImageName' : 'ImagePullBackOff';
+        // ErrImagePull normally transitions to ImagePullBackOff on the next
+        // kubelet retry. Keep one canonical incident fingerprint while retaining
+        // the exact current reason as evidence.
+        const incidentType: IncidentType = 'ImagePullBackOff';
         return {
           detected: true,
           incidentType,
@@ -189,9 +211,13 @@ export class IncidentDetector {
       }
     }
 
-    // 4. Check for Probe failures from events
-    for (const evt of events) {
-      if (evt.type === 'Warning' && evt.reason === 'Unhealthy') {
+    // Events are historical. A warning alone is not a current outage: only raise
+    // a probe incident when it is recent *and* the current PodReady condition is false.
+    const podReady = (resource.conditions || []).find((c) => c.type === 'Ready')?.status === 'True';
+    const recentEvents = events.filter((evt) => evt.timestamp > 0 && evt.timestamp >= resource.updatedAt - 5 * 60 * 1000);
+    // 4. Check current probe failures backed by recent events
+    for (const evt of recentEvents) {
+      if (!podReady && evt.type === 'Warning' && evt.reason === 'Unhealthy') {
         if (evt.message.toLowerCase().includes('liveness probe')) {
           return {
             detected: true,
@@ -473,6 +499,15 @@ export class IncidentDetector {
     return null;
   }
 
+  private static evaluateService(resource: KubernetesResource): DetectionResult | null {
+    const endpoints = Number(resource.statusSummary?.readyEndpoints ?? resource.statusSummary?.endpoints ?? 0);
+    const selector = resource.specSummary?.selector;
+    if (endpoints === 0) {
+      return { detected: true, incidentType: selector && Object.keys(selector as object).length > 0 ? 'ServiceSelectorMismatch' : 'ServiceNoEndpoints', title: `Service ${resource.name} has no ready endpoints`, severity: 'HIGH', technicalDetails: { reason: selector ? 'NoMatchingEndpoints' : 'NoEndpoints', message: selector ? 'Service selector has no ready matching endpoints.' : 'Service has no ready endpoints.', events: resource.events } };
+    }
+    return null;
+  }
+
   /**
    * Deterministic Auto-Recovery Evaluation
    */
@@ -500,6 +535,17 @@ export class IncidentDetector {
             reason: `Pod ${resource.name} is now Running and all containers are in Ready state`
           };
         }
+        break;
+      }
+      case 'ReadinessProbeFailed':
+      case 'LivenessProbeFailed':
+      case 'StartupProbeFailed': {
+        if (resource.status === 'Running' && (resource.conditions || []).some(c => c.type === 'Ready' && c.status === 'True')) return { recovered: true, reason: `Pod ${resource.name} is Ready and no longer has an active probe failure` };
+        break;
+      }
+      case 'ServiceNoEndpoints':
+      case 'ServiceSelectorMismatch': {
+        if (Number(resource.statusSummary?.readyEndpoints ?? resource.statusSummary?.endpoints ?? 0) > 0) return { recovered: true, reason: `Service ${resource.name} has ready endpoints` };
         break;
       }
       case 'NodeNotReady':
