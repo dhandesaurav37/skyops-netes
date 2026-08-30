@@ -38,7 +38,9 @@ test('HTTP and Store Authorization / Multi-Tenant Isolation Suite', async (t) =>
         restartCount: 5,
         state: 'waiting',
         waitingReason: 'CrashLoopBackOff',
-        waitingMessage: 'Back-off restarting container'
+        waitingMessage: 'Back-off restarting container',
+        exitCode: 1,
+        lastTerminationReason: 'Error'
       }
     ]
   });

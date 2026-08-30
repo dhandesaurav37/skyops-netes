@@ -17,3 +17,10 @@ test('preserves Kubernetes UID, ownership, terminal diagnostics, and event evide
   assert.equal(resource?.uid, 'pod-uid'); assert.equal(resource?.apiVersion, 'v1'); assert.equal(resource?.ownerReferences?.[0]?.uid, 'rs-uid');
   assert.equal(resource?.containers?.[0]?.imageId, 'sha256:abc'); assert.equal(resource?.containers?.[0]?.signal, 9); assert.equal(resource?.containers?.[0]?.lastTerminationReason, 'OOMKilled'); assert.equal(resource?.events?.[0]?.id, 'event-uid');
 });
+
+test('preserves agent-provided prior termination and memory-limit evidence', () => {
+  const resource = normalizeResource({ kind: 'Pod', metadata: { name: 'worker', namespace: 'jobs' }, status: { phase: 'Running' }, containers: [{ name: 'worker', image: 'example/worker:v2', restartCount: 3, ready: false, state: 'waiting', waitingReason: 'CrashLoopBackOff', lastTerminationReason: 'Error', lastExitCode: 2, memoryLimit: '256Mi' }] }, 'cluster-a');
+  assert.equal(resource?.containers?.[0]?.lastTerminationReason, 'Error');
+  assert.equal(resource?.containers?.[0]?.lastExitCode, 2);
+  assert.equal(resource?.containers?.[0]?.memoryLimit, '256Mi');
+});

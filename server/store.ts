@@ -691,7 +691,9 @@ export class DataStore {
         resource.namespace || 'default',
         resource.kind,
         resource.name,
-        detection.incidentType
+        detection.incidentType,
+        detection.technicalDetails.containerName || '',
+        detection.technicalDetails.rootCauseCategory || ''
       );
 
       // Deduplication: Look for existing active incident with same fingerprint
