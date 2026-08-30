@@ -12,7 +12,12 @@ import {
   requireRole,
   requireUserAuth
 } from './server/auth';
-import { generateHelmCommand, generateKubernetesManifest } from './server/manifestGenerator';
+import {
+  generateHelmCommand,
+  generateInstallScript,
+  generateKubernetesManifest,
+  generateOneCommandInstall
+} from './server/manifestGenerator';
 import { normalizeTelemetry } from './server/normalization';
 import { store } from './server/store';
 import { AGENT_DEFAULT_NAMESPACE, AGENT_VERSION } from './src/config/version';
@@ -272,8 +277,15 @@ app.get('/api/v1/clusters/:id/manifests', requireUserAuth, requireOrgMembership,
   });
 
   const installKeyParam = cluster.installKey ? `?key=${cluster.installKey}` : '';
-  const installCommand = `kubectl apply -f "${serverUrl}/api/v1/clusters/${cluster.id}/manifest.yaml${installKeyParam}"`;
-  const manifestDownloadUrl = `${serverUrl}/api/v1/clusters/${cluster.id}/manifest.yaml${installKeyParam}`;
+  const oneCommandInstall = cluster.installKey
+    ? generateOneCommandInstall(serverUrl, cluster.installKey)
+    : `curl -fsSL "${serverUrl}/api/v1/clusters/${cluster.id}/install.sh" | bash`;
+  const installCommand = cluster.installKey
+    ? `kubectl apply -f "${serverUrl}/api/v1/install/${cluster.installKey}/manifest.yaml"`
+    : `kubectl apply -f "${serverUrl}/api/v1/clusters/${cluster.id}/manifest.yaml"`;
+  const manifestDownloadUrl = cluster.installKey
+    ? `${serverUrl}/api/v1/install/${cluster.installKey}/manifest.yaml`
+    : `${serverUrl}/api/v1/clusters/${cluster.id}/manifest.yaml${installKeyParam}`;
 
   res.json({
     clusterId: cluster.id,
@@ -285,15 +297,51 @@ app.get('/api/v1/clusters/:id/manifests', requireUserAuth, requireOrgMembership,
     agentVersion: AGENT_VERSION,
     namespace: AGENT_DEFAULT_NAMESPACE,
     kubectlManifest: manifest,
+    oneCommandInstall,
     helmCommand,
     installCommand,
     manifestDownloadUrl
   });
 });
 
-// Single-command curl installation manifest endpoint:
-// curl -fsSL "https://<REAL-SKYOPS-API>/api/v1/install/<INSTALLATION_SESSION>" | kubectl apply -f -
-app.get('/api/v1/install/:sessionKey', (req: Request, res: Response) => {
+// Single-command bash installer endpoint:
+// curl -fsSL "https://<SKYOPS-HOST>/api/v1/install/<SESSION_KEY>" | bash
+const handleScriptInstall = (req: Request, res: Response) => {
+  const { sessionKey } = req.params;
+  const cluster = store.getClusterByInstallKey(sessionKey);
+  if (!cluster) {
+    return res
+      .status(404)
+      .type('text/plain')
+      .send('# Error 404: Invalid or expired SkyOps installation session.\n# Please generate a new connection command from the SkyOps Dashboard.\n');
+  }
+
+  if (cluster.installKeyExpiresAt && Date.now() > cluster.installKeyExpiresAt) {
+    return res
+      .status(403)
+      .type('text/plain')
+      .send('# Error 403: SkyOps installation session has expired (valid for 60 minutes).\n# Please generate a new connection command from the SkyOps Dashboard.\n');
+  }
+
+  const serverUrl = getPublicServerUrl(req);
+  const token = cluster.agentToken || 'sky_agent_configured_token';
+
+  const script = generateInstallScript({
+    clusterId: cluster.id,
+    clusterName: cluster.name,
+    token,
+    serverUrl,
+    installKey: cluster.installKey
+  });
+
+  res.setHeader('Content-Type', 'text/x-shellscript; charset=utf-8');
+  res.setHeader('Content-Disposition', `inline; filename="skyops-install-${cluster.id}.sh"`);
+  res.status(200).send(script);
+};
+
+// Raw YAML manifest endpoint for:
+// kubectl apply -f "https://<SKYOPS-HOST>/api/v1/install/<SESSION_KEY>/manifest.yaml"
+const handleManifestBySession = (req: Request, res: Response) => {
   const { sessionKey } = req.params;
   const cluster = store.getClusterByInstallKey(sessionKey);
   if (!cluster) {
@@ -323,6 +371,59 @@ app.get('/api/v1/install/:sessionKey', (req: Request, res: Response) => {
   res.setHeader('Content-Type', 'text/yaml; charset=utf-8');
   res.setHeader('Content-Disposition', `inline; filename="skyops-agent-${cluster.id}.yaml"`);
   res.status(200).send(manifest);
+};
+
+app.get('/api/v1/install/:sessionKey', handleScriptInstall);
+app.get('/api/v1/install/:sessionKey/install.sh', handleScriptInstall);
+app.get('/api/v1/install/:sessionKey/manifest.yaml', handleManifestBySession);
+
+// Cluster-specific direct installer script handler
+app.get('/api/v1/clusters/:id/install.sh', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const providedKey = (req.query.key as string) || (req.query.installToken as string) || (req.query.token as string);
+  const authHeader = req.headers.authorization;
+
+  const cluster = store.getClusterByIdInternal(id);
+  if (!cluster) {
+    return res.status(404).type('text/plain').send('# Error 404: Kubernetes cluster not found in SkyOps\n');
+  }
+
+  let isAuthorized = false;
+  if (providedKey && cluster.installKey && cluster.installKey === providedKey) {
+    if (!cluster.installKeyExpiresAt || Date.now() <= cluster.installKeyExpiresAt) {
+      isAuthorized = true;
+    }
+  } else if (authHeader && authHeader.startsWith('Bearer ')) {
+    const bearer = authHeader.substring(7).trim();
+    const verified = store.authenticateAgentToken(bearer);
+    if (verified && verified.clusterId === id) {
+      isAuthorized = true;
+    }
+  }
+
+  if (!isAuthorized) {
+    return res
+      .status(403)
+      .type('text/plain')
+      .send(
+        '# Error 403 Forbidden: Invalid, missing, or expired installation key.\n# Please generate a new install command from the SkyOps Dashboard.\n'
+      );
+  }
+
+  const serverUrl = getPublicServerUrl(req);
+  const token = cluster.agentToken || 'sky_agent_configured_token';
+
+  const script = generateInstallScript({
+    clusterId: cluster.id,
+    clusterName: cluster.name,
+    token,
+    serverUrl,
+    installKey: cluster.installKey
+  });
+
+  res.setHeader('Content-Type', 'text/x-shellscript; charset=utf-8');
+  res.setHeader('Content-Disposition', `inline; filename="skyops-install-${cluster.id}.sh"`);
+  res.status(200).send(script);
 });
 
 // Direct raw YAML manifest stream for direct kubectl apply

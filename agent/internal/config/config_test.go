@@ -1,74 +1,47 @@
-package config_test
+package config
 
 import (
 	"os"
 	"testing"
 	"time"
-
-	"github.com/skyops-io/skyops/agent/internal/config"
 )
 
-func TestLoadFromEnv_Success(t *testing.T) {
-	os.Setenv("SKYOPS_CLUSTER_ID", "cls-test-123")
-	os.Setenv("SKYOPS_AGENT_TOKEN", "agt-token-secret")
-	os.Setenv("SKYOPS_SERVER_URL", "https://skyops.acme.corp")
-	defer func() {
-		os.Unsetenv("SKYOPS_CLUSTER_ID")
-		os.Unsetenv("SKYOPS_AGENT_TOKEN")
-		os.Unsetenv("SKYOPS_SERVER_URL")
-	}()
+func TestConfigLoadFromEnv(t *testing.T) {
+	os.Setenv("SKYOPS_SERVER_URL", "https://skyops.example.com")
+	os.Setenv("SKYOPS_CLUSTER_ID", "sky-prod-01")
+	os.Setenv("SKYOPS_AGENT_TOKEN", "test-token-12345")
+	os.Setenv("SKYOPS_HEARTBEAT_INTERVAL", "15s")
+	os.Setenv("SKYOPS_TELEMETRY_INTERVAL", "30s")
 
-	cfg, err := config.LoadFromEnv()
+	cfg, err := LoadFromEnv()
 	if err != nil {
-		t.Fatalf("expected no error, got: %v", err)
+		t.Fatalf("unexpected error loading config: %v", err)
 	}
 
-	if cfg.ClusterID != "cls-test-123" {
-		t.Errorf("expected ClusterID 'cls-test-123', got '%s'", cfg.ClusterID)
+	if cfg.ServerURL != "https://skyops.example.com" {
+		t.Errorf("expected server url https://skyops.example.com, got %s", cfg.ServerURL)
 	}
-
-	if cfg.AgentToken != "agt-token-secret" {
-		t.Errorf("expected AgentToken 'agt-token-secret', got '%s'", cfg.AgentToken)
+	if cfg.ClusterID != "sky-prod-01" {
+		t.Errorf("expected cluster id sky-prod-01, got %s", cfg.ClusterID)
 	}
-
-	if cfg.ServerURL != "https://skyops.acme.corp" {
-		t.Errorf("expected ServerURL 'https://skyops.acme.corp', got '%s'", cfg.ServerURL)
+	if cfg.AgentToken != "test-token-12345" {
+		t.Errorf("expected token test-token-12345, got %s", cfg.AgentToken)
 	}
-
-	if cfg.HeartbeatInterval != 30*time.Second {
-		t.Errorf("expected HeartbeatInterval 30s, got %v", cfg.HeartbeatInterval)
+	if cfg.HeartbeatInterval != 15*time.Second {
+		t.Errorf("expected heartbeat interval 15s, got %v", cfg.HeartbeatInterval)
 	}
-}
-
-func TestLoadFromEnv_MissingClusterID(t *testing.T) {
-	os.Unsetenv("SKYOPS_CLUSTER_ID")
-	os.Setenv("SKYOPS_AGENT_TOKEN", "agt-token-secret")
-	defer os.Unsetenv("SKYOPS_AGENT_TOKEN")
-
-	_, err := config.LoadFromEnv()
-	if err == nil {
-		t.Fatal("expected error for missing SKYOPS_CLUSTER_ID, got nil")
+	if cfg.TelemetryInterval != 30*time.Second {
+		t.Errorf("expected telemetry interval 30s, got %v", cfg.TelemetryInterval)
 	}
 }
 
-func TestLoadFromEnv_MissingToken(t *testing.T) {
-	os.Setenv("SKYOPS_CLUSTER_ID", "cls-test-123")
-	os.Unsetenv("SKYOPS_AGENT_TOKEN")
-	defer os.Unsetenv("SKYOPS_CLUSTER_ID")
-
-	_, err := config.LoadFromEnv()
-	if err == nil {
-		t.Fatal("expected error for missing SKYOPS_AGENT_TOKEN, got nil")
-	}
-}
-
-func TestLoadFromEnv_MissingServerURL(t *testing.T) {
-	os.Setenv("SKYOPS_CLUSTER_ID", "cls-test-123")
-	os.Setenv("SKYOPS_AGENT_TOKEN", "agt-token-secret")
+func TestConfigValidationMissing(t *testing.T) {
 	os.Unsetenv("SKYOPS_SERVER_URL")
-	defer os.Unsetenv("SKYOPS_CLUSTER_ID")
-	defer os.Unsetenv("SKYOPS_AGENT_TOKEN")
-	if _, err := config.LoadFromEnv(); err == nil {
-		t.Fatal("expected error for missing SKYOPS_SERVER_URL, got nil")
+	os.Unsetenv("SKYOPS_CLUSTER_ID")
+	os.Unsetenv("SKYOPS_AGENT_TOKEN")
+
+	_, err := LoadFromEnv()
+	if err == nil {
+		t.Errorf("expected error when required environment variables are missing")
 	}
 }

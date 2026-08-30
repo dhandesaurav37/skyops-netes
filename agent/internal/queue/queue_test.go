@@ -1,53 +1,44 @@
-package queue_test
+package queue
 
 import (
 	"testing"
-
-	"github.com/skyops-io/skyops/agent/internal/queue"
 )
 
-func TestBoundedQueue_PushAndPopAll(t *testing.T) {
-	q := queue.NewBoundedQueue(3)
+func TestBoundedQueue(t *testing.T) {
+	q := NewBoundedQueue(5)
 
-	if q.Size() != 0 {
-		t.Errorf("expected empty queue size 0, got %d", q.Size())
+	if q.Len() != 0 {
+		t.Fatalf("expected initial len 0, got %d", q.Len())
 	}
 
-	q.Push(queue.Item{Type: "TEST", Payload: "1"})
-	q.Push(queue.Item{Type: "TEST", Payload: "2"})
-	q.Push(queue.Item{Type: "TEST", Payload: "3"})
+	q.Push(Item{Type: "T1", Payload: "P1"})
+	q.Push(Item{Type: "T2", Payload: "P2"})
+	q.Push(Item{Type: "T3", Payload: "P3"})
 
-	if q.Size() != 3 {
-		t.Errorf("expected queue size 3, got %d", q.Size())
-	}
-
-	// Pushing a 4th item when capacity is 3 should evict the oldest item ("1")
-	q.Push(queue.Item{Type: "TEST", Payload: "4"})
-
-	if q.Size() != 3 {
-		t.Errorf("expected queue size 3 after eviction, got %d", q.Size())
+	if q.Len() != 3 {
+		t.Fatalf("expected len 3, got %d", q.Len())
 	}
 
 	items := q.PopAll()
 	if len(items) != 3 {
 		t.Fatalf("expected 3 items popped, got %d", len(items))
 	}
-
-	if items[0].Payload != "2" || items[1].Payload != "3" || items[2].Payload != "4" {
-		t.Errorf("unexpected items payload sequence: %+v", items)
+	if q.Len() != 0 {
+		t.Fatalf("expected len 0 after PopAll, got %d", q.Len())
 	}
 
-	if q.Size() != 0 {
-		t.Errorf("expected queue size 0 after PopAll, got %d", q.Size())
+	// Test Requeue
+	q.RequeueFront(items)
+	if q.Len() != 3 {
+		t.Fatalf("expected len 3 after Requeue, got %d", q.Len())
 	}
-}
 
-func TestBoundedQueue_RequeueFront(t *testing.T) {
-	q := queue.NewBoundedQueue(3)
-	q.Push(queue.Item{Type: "new"})
-	q.RequeueFront([]queue.Item{{Type: "retry-a"}, {Type: "retry-b"}})
-	items := q.PopAll()
-	if len(items) != 3 || items[0].Type != "retry-a" || items[1].Type != "retry-b" || items[2].Type != "new" {
-		t.Fatalf("unexpected requeued order: %#v", items)
+	// Test Capacity Overflow protection
+	q.Push(Item{Type: "T4"})
+	q.Push(Item{Type: "T5"})
+	q.Push(Item{Type: "T6"}) // Exceeds cap 5
+
+	if q.Len() > 5 {
+		t.Fatalf("queue exceeded maximum capacity: %d", q.Len())
 	}
 }

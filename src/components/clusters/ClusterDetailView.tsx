@@ -485,68 +485,27 @@ export const ClusterDetailView: React.FC<ClusterDetailViewProps> = ({ clusterId,
                 </div>
               </div>
 
+              {manifestData.oneCommandInstall && (
+                <CodeBlock
+                  code={manifestData.oneCommandInstall}
+                  language="bash"
+                  title="One-Command Safe Installer (Recommended)"
+                />
+              )}
               {manifestData.installCommand && (
                 <CodeBlock
                   code={manifestData.installCommand}
                   language="bash"
-                  title="Quick Install Command"
+                  title="Direct kubectl apply Command"
                 />
               )}
               <CodeBlock
-                code={`TOKEN=$(kubectl get secret skyops-agent-credentials -n skyops-system -o jsonpath='{.data.SKYOPS_AGENT_TOKEN}' | base64 -d)
-SERVER=$(kubectl get secret skyops-agent-credentials -n skyops-system -o jsonpath='{.data.SKYOPS_SERVER_URL}' | base64 -d)
-CLUSTER_ID="${cluster.id}"
-
-# 1. Nodes & Pods
-K8S_VER=$(kubectl version -o json 2>/dev/null | jq -r '.serverVersion.gitVersion // "v1.35.1"')
-NODES=$(kubectl get nodes -o json | jq '[.items[] | {kind: "Node", name: .metadata.name, namespace: "", status: (.status.conditions[]? | select(.type=="Ready") | .type // "Ready"), health: (if (.status.conditions[]? | select(.type=="Ready" and .status=="True")) then "HEALTHY" else "CRITICAL" end), createdAt: (.metadata.creationTimestamp | fromdateiso8601 * 1000), updatedAt: (now * 1000), specSummary: {kubeletVersion: .status.nodeInfo.kubeletVersion, osImage: .status.nodeInfo.osImage}, statusSummary: {capacityCpu: .status.capacity.cpu, capacityMemory: .status.capacity.memory}}]')
-PODS=$(kubectl get pods -A -o json | jq '[.items[] | {kind: "Pod", name: .metadata.name, namespace: .metadata.namespace, status: .status.phase, health: (if .status.phase=="Running" then "HEALTHY" elif .status.phase=="Succeeded" then "HEALTHY" else "WARNING" end), createdAt: (.metadata.creationTimestamp | fromdateiso8601 * 1000), updatedAt: (now * 1000), specSummary: {nodeName: .spec.nodeName}, statusSummary: {podIP: .status.podIP, hostIP: .status.hostIP}}]')
-
-# 2. Deployments
-DEPS=$(kubectl get deployments -A -o json | jq '[.items[] | {kind: "Deployment", name: .metadata.name, namespace: .metadata.namespace, status: (if (.status.readyReplicas // 0) == .spec.replicas then "Available" else "Progressing" end), health: (if (.status.readyReplicas // 0) == .spec.replicas then "HEALTHY" else "WARNING" end), createdAt: (.metadata.creationTimestamp | fromdateiso8601 * 1000), updatedAt: (now * 1000), specSummary: {replicas: .spec.replicas}, statusSummary: {readyReplicas: (.status.readyReplicas // 0), updatedReplicas: (.status.updatedReplicas // 0)}}]')
-
-# 3. DaemonSets & StatefulSets
-DAEMONS=$(kubectl get daemonsets -A -o json | jq '[.items[] | {kind: "DaemonSet", name: .metadata.name, namespace: .metadata.namespace, status: (if (.status.numberReady // 0) == .status.desiredNumberScheduled then "Ready" else "Progressing" end), health: (if (.status.numberReady // 0) == .status.desiredNumberScheduled then "HEALTHY" else "WARNING" end), createdAt: (.metadata.creationTimestamp | fromdateiso8601 * 1000), updatedAt: (now * 1000), specSummary: {desired: .status.desiredNumberScheduled}, statusSummary: {numberReady: (.status.numberReady // 0)}}]')
-STS=$(kubectl get statefulsets -A -o json | jq '[.items[] | {kind: "StatefulSet", name: .metadata.name, namespace: .metadata.namespace, status: (if (.status.readyReplicas // 0) == .spec.replicas then "Ready" else "Progressing" end), health: (if (.status.readyReplicas // 0) == .spec.replicas then "HEALTHY" else "WARNING" end), createdAt: (.metadata.creationTimestamp | fromdateiso8601 * 1000), updatedAt: (now * 1000), specSummary: {replicas: .spec.replicas}, statusSummary: {readyReplicas: (.status.readyReplicas // 0)}}]')
-
-# 4. Storage PVCs
-PVCS=$(kubectl get pvc -A -o json | jq '[.items[] | {kind: "PersistentVolumeClaim", name: .metadata.name, namespace: .metadata.namespace, status: .status.phase, health: (if .status.phase=="Bound" then "HEALTHY" else "WARNING" end), createdAt: (.metadata.creationTimestamp | fromdateiso8601 * 1000), updatedAt: (now * 1000), specSummary: {storageClassName: .spec.storageClassName}, statusSummary: {capacity: .status.capacity.storage}}]')
-
-# 5. Cluster Events
-EVENTS=$(kubectl get events -A -o json | jq '[.items[:50][] | {kind: "Event", name: (.metadata.name // "event"), namespace: (.metadata.namespace // "default"), status: (.type // "Normal"), health: (if .type=="Warning" then "WARNING" else "HEALTHY" end), createdAt: ((.lastTimestamp // .metadata.creationTimestamp) | fromdateiso8601 * 1000), updatedAt: (now * 1000), specSummary: {reason: .reason, message: .message}, statusSummary: {source: (.source.component // "k8s")}}]')
-
-# 6. Transmit Telemetry Payload to SkyOps
-jq -c -n \\
-  --arg cid "$CLUSTER_ID" \\
-  --argjson ts "$(date +%s000 2>/dev/null || echo 0)" \\
-  --argjson n "$NODES" \\
-  --argjson p "$PODS" \\
-  --argjson d "$DEPS" \\
-  --argjson ds "$DAEMONS" \\
-  --argjson st "$STS" \\
-  --argjson pvc "$PVCS" \\
-  --argjson ev "$EVENTS" \\
-  '{clusterId: $cid, timestamp: $ts, resources: ($n + $p + $d + $ds + $st + $pvc + $ev)}' | \\
-curl -k -s -X POST "$SERVER/api/v1/agent/telemetry" \\
-  -H "Authorization: Bearer $TOKEN" \\
-  -H "Content-Type: application/json" \\
-  -d @-
-
-# 7. Update Agent Heartbeat
-jq -c -n \\
-  --arg ver "$K8S_VER" \\
-  --argjson nodes "$(echo "$NODES" | jq 'length')" \\
-  --argjson pods "$(echo "$PODS" | jq 'length')" \\
-  '{agentVersion: "v1.5.0", k8sVersion: $ver, nodeCount: $nodes, podCount: $pods}' | \\
-curl -k -s -X POST "$SERVER/api/v1/agent/heartbeat" \\
-  -H "Authorization: Bearer $TOKEN" \\
-  -H "Content-Type: application/json" \\
-  -d @-`}
+                code={`# Check agent pod status\nkubectl get pods -n skyops-system -l app.kubernetes.io/name=skyops-agent\n\n# Stream agent logs\nkubectl logs -n skyops-system -l app.kubernetes.io/name=skyops-agent -f`}
                 language="bash"
-                title="CLI Manual Telemetry & Sync Script (Instant Verification)"
+                title="Agent Verification & Diagnostics"
               />
-              <CodeBlock code={manifestData.kubectlManifest} language="yaml" title="kubectl apply manifest" />
               <CodeBlock code={manifestData.helmCommand} language="bash" title="Helm Upgrade / Install" />
+              <CodeBlock code={manifestData.kubectlManifest} language="yaml" title="Full Kubernetes Agent Manifest" />
             </div>
           )}
         </div>

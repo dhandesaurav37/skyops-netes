@@ -8,19 +8,15 @@ import {
   Clock,
   Copy,
   Cpu,
-  Eye,
   KeyRound,
-  Layers,
   Loader2,
   Radio,
   Server,
   ShieldCheck,
-  Terminal,
-  Zap
+  Terminal
 } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 import { api } from '../../api/client';
-import { AGENT_VERSION } from '../../config/version';
 import { AgentManifestsResponse, Cluster } from '../../types/index';
 import { Button, CodeBlock, Modal } from '../common/UI';
 
@@ -49,6 +45,9 @@ export const AddClusterModal: React.FC<AddClusterModalProps> = ({
   const [manifestData, setManifestData] = useState<AgentManifestsResponse | null>(null);
   const [copied, setCopied] = useState(false);
   const [logCommandCopied, setLogCommandCopied] = useState(false);
+
+  // Installation method selection tabs
+  const [installMethod, setInstallMethod] = useState<'one-command' | 'kubectl' | 'helm' | 'yaml'>('one-command');
 
   // Step 3 Activation Code State
   const [activationCode, setActivationCode] = useState('');
@@ -83,10 +82,19 @@ export const AddClusterModal: React.FC<AddClusterModalProps> = ({
   };
 
   // Copy command helper
-  const handleCopyCommand = async () => {
-    if (!manifestData?.installCommand) return;
+  const handleCopyCommand = async (textToCopy?: string) => {
+    const text =
+      textToCopy ||
+      (installMethod === 'one-command'
+        ? manifestData?.oneCommandInstall || manifestData?.installCommand
+        : installMethod === 'kubectl'
+        ? manifestData?.installCommand
+        : installMethod === 'helm'
+        ? manifestData?.helmCommand
+        : manifestData?.kubectlManifest);
+    if (!text) return;
     try {
-      await navigator.clipboard.writeText(manifestData.installCommand);
+      await navigator.clipboard.writeText(text);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
@@ -97,7 +105,9 @@ export const AddClusterModal: React.FC<AddClusterModalProps> = ({
   // Copy log command helper
   const handleCopyLogCommand = async () => {
     try {
-      await navigator.clipboard.writeText('kubectl logs -n skyops-system -l app.kubernetes.io/name=skyops-agent --tail=20');
+      await navigator.clipboard.writeText(
+        'kubectl logs -n skyops-system -l app.kubernetes.io/name=skyops-agent --tail=30 -f'
+      );
       setLogCommandCopied(true);
       setTimeout(() => setLogCommandCopied(false), 2000);
     } catch {
@@ -128,7 +138,6 @@ export const AddClusterModal: React.FC<AddClusterModalProps> = ({
           setAgentPulseDetected(true);
           setCreatedCluster(cluster);
           onClusterCreated(cluster);
-          // Do not auto-advance from Step 3 immediately to allow user time to copy the CLI command
         } else if (cluster.agentDetectedAt || cluster.lastHeartbeat) {
           setAgentPulseDetected(true);
           setCreatedCluster(cluster);
@@ -136,10 +145,10 @@ export const AddClusterModal: React.FC<AddClusterModalProps> = ({
       } catch {
         // Non-fatal polling error
       }
-    }, 2500);
+    }, 2000);
 
     return () => clearInterval(poller);
-  }, [isOpen, createdCluster?.id, verifySuccess]);
+  }, [isOpen, createdCluster?.id, verifySuccess, onClusterCreated]);
 
   // Handle human-entered activation code validation
   const handleVerifyActivation = async (e?: React.FormEvent) => {
@@ -156,7 +165,7 @@ export const AddClusterModal: React.FC<AddClusterModalProps> = ({
       onClusterCreated(res.cluster);
       setCurrentStep(4);
     } catch (err: any) {
-      setError(err.message || 'That activation code is incorrect.');
+      setError(err.message || 'That activation code is incorrect or expired.');
     } finally {
       setVerifying(false);
     }
@@ -172,6 +181,7 @@ export const AddClusterModal: React.FC<AddClusterModalProps> = ({
     setVerifying(false);
     setVerifySuccess(false);
     setAgentPulseDetected(false);
+    setInstallMethod('one-command');
     setError(null);
     onClose();
   };
@@ -193,7 +203,15 @@ export const AddClusterModal: React.FC<AddClusterModalProps> = ({
     <Modal
       isOpen={isOpen}
       onClose={handleResetAndClose}
-      title={currentStep === 1 ? 'Connect Cluster' : currentStep === 2 ? 'Activate Cluster' : currentStep === 3 ? 'Complete Connection' : 'Cluster Connected'}
+      title={
+        currentStep === 1
+          ? 'Connect Cluster'
+          : currentStep === 2
+          ? 'Install Agent'
+          : currentStep === 3
+          ? 'Cluster Handshake'
+          : 'Cluster Connected'
+      }
       maxWidth={currentStep === 1 ? 'md' : 'xl'}
     >
       <div className="space-y-6">
@@ -201,8 +219,8 @@ export const AddClusterModal: React.FC<AddClusterModalProps> = ({
         <div className="flex items-center justify-between border-b border-zinc-800 pb-4">
           {[
             { step: 1, label: 'Create Cluster' },
-            { step: 2, label: 'Activate Cluster' },
-            { step: 3, label: 'Activation Code' },
+            { step: 2, label: 'Install Agent' },
+            { step: 3, label: 'Handshake' },
             { step: 4, label: 'Connected' }
           ].map((item, idx) => {
             const isCompleted = currentStep > item.step || (item.step === 4 && verifySuccess);
@@ -307,90 +325,159 @@ export const AddClusterModal: React.FC<AddClusterModalProps> = ({
         )}
 
         {/* =======================================================
-            2. ACTIVATE CLUSTER (ONE Primary Command)
+            2. INSTALL AGENT (Multi-Method Tabs)
            ======================================================= */}
         {currentStep === 2 && createdCluster && manifestData && (
           <div className="space-y-6">
             <div className="space-y-1">
               <h2 className="text-base font-semibold text-zinc-100">
-                Activate your Kubernetes cluster
+                Install SkyOps Agent into {createdCluster.name}
               </h2>
               <p className="text-xs text-zinc-400 leading-relaxed">
-                Run this command in a terminal that has access to your Kubernetes cluster:
+                Run the command below in your cluster terminal. The agent runs in namespace{' '}
+                <code className="text-sky-300 bg-zinc-900 px-1 py-0.5 rounded">skyops-system</code> with least-privilege
+                read-only permissions.
               </p>
             </div>
 
-            {/* ONE Primary Installation Command Box */}
-            <div className="space-y-2">
-              <div className="relative group bg-zinc-950 border border-zinc-800 rounded-xl p-4 font-mono text-xs text-zinc-200 break-all leading-relaxed shadow-inner">
-                <div className="pr-20 text-sky-300 select-all font-medium">
-                  {manifestData.installCommand}
+            {/* Installation Method Switcher Tabs */}
+            <div className="flex items-center gap-1 border-b border-zinc-800 pb-2">
+              <button
+                type="button"
+                onClick={() => setInstallMethod('one-command')}
+                className={`px-3 py-1.5 text-xs font-mono rounded-lg transition-all ${
+                  installMethod === 'one-command'
+                    ? 'bg-sky-950 text-sky-300 border border-sky-800 font-semibold'
+                    : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                One-Command (Recommended)
+              </button>
+              <button
+                type="button"
+                onClick={() => setInstallMethod('kubectl')}
+                className={`px-3 py-1.5 text-xs font-mono rounded-lg transition-all ${
+                  installMethod === 'kubectl'
+                    ? 'bg-sky-950 text-sky-300 border border-sky-800 font-semibold'
+                    : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                kubectl apply
+              </button>
+              <button
+                type="button"
+                onClick={() => setInstallMethod('helm')}
+                className={`px-3 py-1.5 text-xs font-mono rounded-lg transition-all ${
+                  installMethod === 'helm'
+                    ? 'bg-sky-950 text-sky-300 border border-sky-800 font-semibold'
+                    : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                Helm Chart
+              </button>
+              <button
+                type="button"
+                onClick={() => setInstallMethod('yaml')}
+                className={`px-3 py-1.5 text-xs font-mono rounded-lg transition-all ${
+                  installMethod === 'yaml'
+                    ? 'bg-sky-950 text-sky-300 border border-sky-800 font-semibold'
+                    : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                Raw YAML
+              </button>
+            </div>
+
+            {/* Command Display */}
+            {installMethod === 'one-command' && (
+              <div className="space-y-2">
+                <div className="relative group bg-zinc-950 border border-zinc-800 rounded-xl p-4 font-mono text-xs text-zinc-200 break-all leading-relaxed shadow-inner">
+                  <div className="pr-20 text-sky-300 select-all font-medium">
+                    {manifestData.oneCommandInstall || manifestData.installCommand}
+                  </div>
+                  <div className="absolute right-3 top-3">
+                    <button
+                      type="button"
+                      onClick={() => handleCopyCommand(manifestData.oneCommandInstall || manifestData.installCommand)}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono font-medium transition-all ${
+                        copied
+                          ? 'bg-emerald-500 text-zinc-950'
+                          : 'bg-sky-500 hover:bg-sky-400 text-zinc-950 shadow-sm'
+                      }`}
+                    >
+                      {copied ? (
+                        <>
+                          <Check className="w-3.5 h-3.5 stroke-[3]" />
+                          Copied
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3.5 h-3.5" />
+                          Copy
+                        </>
+                      )}
+                    </button>
+                  </div>
                 </div>
-                <div className="absolute right-3 top-3">
-                  <button
-                    type="button"
-                    onClick={handleCopyCommand}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono font-medium transition-all ${
-                      copied
-                        ? 'bg-emerald-500 text-zinc-950'
-                        : 'bg-sky-500 hover:bg-sky-400 text-zinc-950 shadow-sm'
-                    }`}
-                  >
-                    {copied ? (
-                      <>
-                        <Check className="w-3.5 h-3.5 stroke-[3]" />
-                        Copied
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-3.5 h-3.5" />
-                        Copy Command
-                      </>
-                    )}
-                  </button>
-                </div>
+                <p className="text-[11px] font-mono text-zinc-500">
+                  Performs preflight checks for kubectl, validates cluster reachability, creates namespace{' '}
+                  <code className="text-zinc-400">skyops-system</code>, applies secrets and deployment, and waits for
+                  rollout.
+                </p>
               </div>
-            </div>
+            )}
 
-            {/* What happens next? */}
-            <div className="p-4 bg-zinc-950/60 border border-zinc-800/80 rounded-xl space-y-2.5">
-              <h3 className="text-xs font-mono font-semibold text-zinc-200 tracking-wide uppercase">
-                What happens next?
-              </h3>
-              <ol className="text-xs text-zinc-400 font-mono space-y-1.5 list-decimal list-inside leading-relaxed">
-                <li>SkyOps installs the Agent in your cluster.</li>
-                <li>The Agent connects securely to SkyOps.</li>
-                <li>Your terminal displays a Connection Key.</li>
-                <li>Enter that key below to complete the connection.</li>
-              </ol>
-            </div>
+            {installMethod === 'kubectl' && (
+              <div className="space-y-2">
+                <CodeBlock
+                  language="bash"
+                  title="Direct kubectl Apply"
+                  code={
+                    manifestData.installCommand ||
+                    `kubectl apply -f "${manifestData.serverUrl}/api/v1/clusters/${createdCluster.id}/manifest.yaml"`
+                  }
+                />
+              </div>
+            )}
 
-            {/* Secure connection section */}
+            {installMethod === 'helm' && (
+              <div className="space-y-2">
+                <CodeBlock language="bash" title="Helm 3 Upgrade / Install" code={manifestData.helmCommand} />
+              </div>
+            )}
+
+            {installMethod === 'yaml' && (
+              <div className="space-y-2">
+                <CodeBlock
+                  language="yaml"
+                  title={`Kubernetes Manifest (Cluster: ${createdCluster.name})`}
+                  code={manifestData.kubectlManifest}
+                />
+              </div>
+            )}
+
+            {/* Security checklist */}
             <div className="p-3.5 bg-zinc-900/40 border border-zinc-800/70 rounded-xl space-y-2">
               <h3 className="text-xs font-mono font-semibold text-emerald-400 flex items-center gap-1.5">
                 <ShieldCheck className="w-4 h-4" />
-                Secure connection
+                Security & RBAC Guarantees
               </h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[11px] font-mono text-zinc-400">
                 <div className="flex items-center gap-1.5">
                   <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                  Short-lived installation session
+                  Read-only ClusterRole (get, list, watch)
                 </div>
                 <div className="flex items-center gap-1.5">
                   <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                  Cluster-specific activation
+                  Isolated in namespace skyops-system
                 </div>
                 <div className="flex items-center gap-1.5">
                   <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                  Read-only Kubernetes monitoring
+                  Outbound-only HTTPS telemetry stream
                 </div>
                 <div className="flex items-center gap-1.5">
                   <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                  Least-privilege Kubernetes permissions
-                </div>
-                <div className="flex items-center gap-1.5 sm:col-span-2">
-                  <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                  Connection key expires automatically (15 minutes)
+                  Dedicated per-cluster authentication token
                 </div>
               </div>
             </div>
@@ -402,7 +489,7 @@ export const AddClusterModal: React.FC<AddClusterModalProps> = ({
                 Back
               </Button>
               <Button variant="primary" onClick={() => setCurrentStep(3)}>
-                Next: Enter Connection Key
+                Next: Check Connection Status
                 <ArrowRight className="w-4 h-4 ml-1.5" />
               </Button>
             </div>
@@ -410,208 +497,139 @@ export const AddClusterModal: React.FC<AddClusterModalProps> = ({
         )}
 
         {/* =======================================================
-            3. VERIFY ACTIVATION (Complete your connection)
+            3. VERIFY ACTIVATION (Auto Detection + Handshake)
            ======================================================= */}
         {currentStep === 3 && createdCluster && (
           <div className="space-y-5">
             <div className="space-y-1">
-              <h2 className="text-base font-semibold text-zinc-100">
-                Complete your connection
-              </h2>
+              <h2 className="text-base font-semibold text-zinc-100">Cluster Handshake & Status</h2>
               <p className="text-xs text-zinc-400 leading-relaxed">
-                {agentPulseDetected
-                  ? 'Your SkyOps Agent is running and sending telemetry.'
-                  : 'Execute the telemetry command below in your cluster CLI or enter the connection key to complete activation.'}
+                {verifySuccess || createdCluster.agentStatus === 'CONNECTED'
+                  ? 'SkyOps Agent is connected and actively streaming live Kubernetes telemetry.'
+                  : agentPulseDetected
+                  ? 'Agent pulse detected! Finalizing initial handshake...'
+                  : 'Waiting for the SkyOps Agent pod to start in your cluster and establish its connection.'}
               </p>
             </div>
 
-            {/* Waiting for agent status / pulse banner */}
-            <div className="p-3.5 rounded-xl border font-mono text-xs flex items-center justify-between transition-all bg-zinc-950/80 border-zinc-800">
-              <div className="flex items-center gap-2.5">
-                {agentPulseDetected ? (
+            {/* Status Pulse Banner */}
+            <div
+              className={`p-4 rounded-xl border font-mono text-xs flex items-center justify-between transition-all ${
+                verifySuccess || createdCluster.agentStatus === 'CONNECTED'
+                  ? 'bg-emerald-950/40 border-emerald-800/80 text-emerald-300'
+                  : agentPulseDetected
+                  ? 'bg-sky-950/40 border-sky-800/80 text-sky-300'
+                  : 'bg-zinc-950/80 border-zinc-800 text-zinc-300'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                {verifySuccess || createdCluster.agentStatus === 'CONNECTED' ? (
                   <>
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
-                    <span className="text-emerald-300 font-semibold">Your SkyOps Agent is running.</span>
+                    <div className="w-3 h-3 rounded-full bg-emerald-400 animate-ping shrink-0" />
+                    <div>
+                      <div className="font-semibold text-emerald-200">Agent Connected & Verified</div>
+                      <div className="text-[11px] text-emerald-400/80">
+                        K8s {createdCluster.k8sVersion || 'v1.30+'} · {createdCluster.nodeCount} Nodes ·{' '}
+                        {createdCluster.podCount} Pods
+                      </div>
+                    </div>
+                  </>
+                ) : agentPulseDetected ? (
+                  <>
+                    <div className="w-3 h-3 rounded-full bg-sky-400 animate-ping shrink-0" />
+                    <div>
+                      <div className="font-semibold text-sky-200">Agent Initial Contact Detected</div>
+                      <div className="text-[11px] text-sky-400/80">
+                        Ingesting cluster topology & telemetry stream...
+                      </div>
+                    </div>
                   </>
                 ) : (
                   <>
-                    <Loader2 className="w-4 h-4 text-sky-400 animate-spin" />
-                    <span className="text-zinc-300">Waiting for agent telemetry / pulse...</span>
+                    <Loader2 className="w-4 h-4 text-sky-400 animate-spin shrink-0" />
+                    <div>
+                      <div className="font-medium text-zinc-200">Listening for Agent Telemetry</div>
+                      <div className="text-[11px] text-zinc-500">Run the install command in your cluster CLI</div>
+                    </div>
                   </>
                 )}
               </div>
-              <div className="text-amber-400 text-[11px] flex items-center gap-1">
+              <div className="text-amber-400 text-[11px] flex items-center gap-1 font-mono shrink-0">
                 <Clock className="w-3.5 h-3.5" />
-                Expires in {formatCountdown(timeRemainingSeconds)}
+                Session: {formatCountdown(timeRemainingSeconds)}
               </div>
             </div>
 
-            {/* CLI Configuration & Telemetry Command Box */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-mono font-medium text-zinc-200 flex items-center gap-1.5">
-                  <Terminal className="w-3.5 h-3.5 text-sky-400" />
-                  CLI Telemetry & Resource Sync Script
-                </label>
-                <span className="text-[10px] font-mono text-zinc-400">Copy & Paste directly into your cluster terminal</span>
-              </div>
-              <CodeBlock
-                language="bash"
-                title={`Cluster Telemetry Script (${createdCluster.name})`}
-                code={`TOKEN=$(kubectl get secret skyops-agent-credentials -n skyops-system -o jsonpath='{.data.SKYOPS_AGENT_TOKEN}' | base64 -d)
-SERVER=$(kubectl get secret skyops-agent-credentials -n skyops-system -o jsonpath='{.data.SKYOPS_SERVER_URL}' | base64 -d)
-CLUSTER_ID="${createdCluster.id}"
-
-# 1. Nodes & Pods
-K8S_VER=$(kubectl version -o json 2>/dev/null | jq -r '.serverVersion.gitVersion // "v1.35.1"')
-NODES=$(kubectl get nodes -o json | jq '[.items[] | {kind: "Node", name: .metadata.name, namespace: "", status: (.status.conditions[]? | select(.type=="Ready") | .type // "Ready"), health: (if (.status.conditions[]? | select(.type=="Ready" and .status=="True")) then "HEALTHY" else "CRITICAL" end), createdAt: (.metadata.creationTimestamp | fromdateiso8601 * 1000), updatedAt: (now * 1000), specSummary: {kubeletVersion: .status.nodeInfo.kubeletVersion, osImage: .status.nodeInfo.osImage}, statusSummary: {capacityCpu: .status.capacity.cpu, capacityMemory: .status.capacity.memory}}]')
-PODS=$(kubectl get pods -A -o json | jq '[.items[] | {kind: "Pod", name: .metadata.name, namespace: .metadata.namespace, status: .status.phase, health: (if .status.phase=="Running" then "HEALTHY" elif .status.phase=="Succeeded" then "HEALTHY" else "WARNING" end), createdAt: (.metadata.creationTimestamp | fromdateiso8601 * 1000), updatedAt: (now * 1000), specSummary: {nodeName: .spec.nodeName}, statusSummary: {podIP: .status.podIP, hostIP: .status.hostIP}}]')
-
-# 2. Deployments
-DEPS=$(kubectl get deployments -A -o json | jq '[.items[] | {kind: "Deployment", name: .metadata.name, namespace: .metadata.namespace, status: (if (.status.readyReplicas // 0) == .spec.replicas then "Available" else "Progressing" end), health: (if (.status.readyReplicas // 0) == .spec.replicas then "HEALTHY" else "WARNING" end), createdAt: (.metadata.creationTimestamp | fromdateiso8601 * 1000), updatedAt: (now * 1000), specSummary: {replicas: .spec.replicas}, statusSummary: {readyReplicas: (.status.readyReplicas // 0), updatedReplicas: (.status.updatedReplicas // 0)}}]')
-
-# 3. DaemonSets & StatefulSets
-DAEMONS=$(kubectl get daemonsets -A -o json | jq '[.items[] | {kind: "DaemonSet", name: .metadata.name, namespace: .metadata.namespace, status: (if (.status.numberReady // 0) == .status.desiredNumberScheduled then "Ready" else "Progressing" end), health: (if (.status.numberReady // 0) == .status.desiredNumberScheduled then "HEALTHY" else "WARNING" end), createdAt: (.metadata.creationTimestamp | fromdateiso8601 * 1000), updatedAt: (now * 1000), specSummary: {desired: .status.desiredNumberScheduled}, statusSummary: {numberReady: (.status.numberReady // 0)}}]')
-STS=$(kubectl get statefulsets -A -o json | jq '[.items[] | {kind: "StatefulSet", name: .metadata.name, namespace: .metadata.namespace, status: (if (.status.readyReplicas // 0) == .spec.replicas then "Ready" else "Progressing" end), health: (if (.status.readyReplicas // 0) == .spec.replicas then "HEALTHY" else "WARNING" end), createdAt: (.metadata.creationTimestamp | fromdateiso8601 * 1000), updatedAt: (now * 1000), specSummary: {replicas: .spec.replicas}, statusSummary: {readyReplicas: (.status.readyReplicas // 0)}}]')
-
-# 4. Storage PVCs
-PVCS=$(kubectl get pvc -A -o json | jq '[.items[] | {kind: "PersistentVolumeClaim", name: .metadata.name, namespace: .metadata.namespace, status: .status.phase, health: (if .status.phase=="Bound" then "HEALTHY" else "WARNING" end), createdAt: (.metadata.creationTimestamp | fromdateiso8601 * 1000), updatedAt: (now * 1000), specSummary: {storageClassName: .spec.storageClassName}, statusSummary: {capacity: .status.capacity.storage}}]')
-
-# 5. Cluster Events
-EVENTS=$(kubectl get events -A -o json | jq '[.items[:50][] | {kind: "Event", name: (.metadata.name // "event"), namespace: (.metadata.namespace // "default"), status: (.type // "Normal"), health: (if .type=="Warning" then "WARNING" else "HEALTHY" end), createdAt: ((.lastTimestamp // .metadata.creationTimestamp) | fromdateiso8601 * 1000), updatedAt: (now * 1000), specSummary: {reason: .reason, message: .message}, statusSummary: {source: (.source.component // "k8s")}}]')
-
-# 6. Transmit Telemetry Payload to SkyOps
-jq -c -n \\
-  --arg cid "$CLUSTER_ID" \\
-  --argjson ts "$(date +%s000 2>/dev/null || echo 0)" \\
-  --argjson n "$NODES" \\
-  --argjson p "$PODS" \\
-  --argjson d "$DEPS" \\
-  --argjson ds "$DAEMONS" \\
-  --argjson st "$STS" \\
-  --argjson pvc "$PVCS" \\
-  --argjson ev "$EVENTS" \\
-  '{clusterId: $cid, timestamp: $ts, resources: ($n + $p + $d + $ds + $st + $pvc + $ev)}' | \\
-curl -k -s -X POST "$SERVER/api/v1/agent/telemetry" \\
-  -H "Authorization: Bearer $TOKEN" \\
-  -H "Content-Type: application/json" \\
-  -d @-
-
-# 7. Update Agent Heartbeat
-jq -c -n \\
-  --arg ver "$K8S_VER" \\
-  --argjson nodes "$(echo "$NODES" | jq 'length')" \\
-  --argjson pods "$(echo "$PODS" | jq 'length')" \\
-  '{agentVersion: "v1.5.0", k8sVersion: $ver, nodeCount: $nodes, podCount: $pods}' | \\
-curl -k -s -X POST "$SERVER/api/v1/agent/heartbeat" \\
-  -H "Authorization: Bearer $TOKEN" \\
-  -H "Content-Type: application/json" \\
-  -d @-`}
-              />
-            </div>
-
-            {/* Quick Pod Logs Inspection Helper with dedicated Copy Button */}
-            <div className="p-3.5 bg-zinc-950/90 border border-zinc-800/90 rounded-xl space-y-2.5">
+            {/* Diagnostic / Logs command helper */}
+            <div className="p-3.5 bg-zinc-950/90 border border-zinc-800/90 rounded-xl space-y-2">
               <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2 min-w-0">
-                  <div className="p-1.5 rounded-md bg-sky-950/60 border border-sky-800/50 text-sky-400 shrink-0">
-                    <Terminal className="w-3.5 h-3.5" />
-                  </div>
-                  <div>
-                    <div className="text-xs font-semibold text-zinc-200 font-mono">
-                      Fetch Connection Key from Pod Logs
-                    </div>
-                    <div className="text-[11px] text-zinc-400">
-                      Run this in your cluster terminal if you need to retrieve the key manually:
-                    </div>
-                  </div>
+                <div className="flex items-center gap-2">
+                  <Terminal className="w-3.5 h-3.5 text-sky-400" />
+                  <span className="text-xs font-semibold text-zinc-200 font-mono">Stream Agent Pod Logs</span>
                 </div>
-
                 <button
                   type="button"
-                  id="copy-pod-logs-command-btn"
                   onClick={handleCopyLogCommand}
-                  className={`px-3 py-1.5 text-xs font-mono rounded-lg border flex items-center gap-1.5 transition-all shrink-0 font-medium ${
+                  className={`px-2.5 py-1 text-xs font-mono rounded-lg border flex items-center gap-1.5 transition-all font-medium ${
                     logCommandCopied
                       ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
-                      : 'bg-zinc-900 hover:bg-zinc-800 border-zinc-700/80 text-zinc-200 hover:text-white shadow-sm'
+                      : 'bg-zinc-900 hover:bg-zinc-800 border-zinc-700 text-zinc-300'
                   }`}
                 >
-                  {logCommandCopied ? (
-                    <>
-                      <Check className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>Copied!</span>
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="w-3.5 h-3.5 text-zinc-400" />
-                      <span>Copy Command</span>
-                    </>
-                  )}
+                  {logCommandCopied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                  <span>{logCommandCopied ? 'Copied' : 'Copy'}</span>
                 </button>
               </div>
-
-              <div className="font-mono text-xs text-sky-300 bg-zinc-900/90 border border-zinc-800/70 px-3 py-2 rounded-lg select-all overflow-x-auto">
-                <code>kubectl logs -n skyops-system -l app.kubernetes.io/name=skyops-agent --tail=20</code>
+              <div className="font-mono text-xs text-sky-300 bg-zinc-900/90 border border-zinc-800/70 px-3 py-2 rounded-lg select-all">
+                <code>kubectl logs -n skyops-system -l app.kubernetes.io/name=skyops-agent --tail=30 -f</code>
               </div>
             </div>
 
-            {/* Input Form */}
-            <form onSubmit={handleVerifyActivation} className="space-y-4">
-              <div>
-                <label className="block text-xs font-mono font-medium text-zinc-300 mb-1.5">
-                  Connection Key <span className="text-rose-400">*</span>
-                </label>
-                <div className="relative">
-                  <KeyRound className="w-4 h-4 text-zinc-500 absolute left-3.5 top-3" />
+            {/* Optional Manual Activation Code entry if desired */}
+            {!verifySuccess && createdCluster.agentStatus !== 'CONNECTED' && (
+              <form onSubmit={handleVerifyActivation} className="p-4 bg-zinc-950/60 border border-zinc-800 rounded-xl space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-mono font-medium text-zinc-300 flex items-center gap-1.5">
+                    <KeyRound className="w-3.5 h-3.5 text-zinc-400" />
+                    Manual Connection Key (Optional)
+                  </label>
+                  {manifestData?.connectionCode && (
+                    <span className="text-[10px] font-mono text-zinc-500">
+                      Expected Key: <span className="text-sky-400 font-bold">{manifestData.connectionCode}</span>
+                    </span>
+                  )}
+                </div>
+                <div className="flex gap-2">
                   <input
                     type="text"
-                    required
-                    placeholder="SKYOPS-7K4M-92PX"
+                    placeholder="SKYOPS-XXXX-XXXX"
                     value={activationCode}
                     onChange={(e) => setActivationCode(e.target.value)}
-                    className="w-full pl-10 pr-3 py-2.5 text-base bg-zinc-950 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-sky-500 font-mono uppercase tracking-widest font-bold"
+                    className="flex-1 px-3 py-2 text-sm bg-zinc-900 border border-zinc-700 rounded-lg text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-sky-500 font-mono uppercase tracking-wider"
                   />
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between pt-3 border-t border-zinc-800">
-                <Button variant="ghost" onClick={() => setCurrentStep(2)} type="button">
-                  <ArrowLeft className="w-4 h-4 mr-1.5" />
-                  Back to Command
-                </Button>
-                <div className="flex items-center gap-2">
-                  {(verifySuccess || agentPulseDetected) && (
-                    <Button
-                      variant="outline"
-                      type="button"
-                      onClick={() => setCurrentStep(4)}
-                    >
-                      View Summary (Step 4) →
-                    </Button>
-                  )}
-                  <Button
-                    variant="primary"
-                    type="submit"
-                    disabled={verifying || !activationCode.trim() || timeRemainingSeconds === 0}
-                  >
-                    {verifying ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
-                        Connecting...
-                      </>
-                    ) : (
-                      'Connect Cluster'
-                    )}
+                  <Button variant="primary" type="submit" disabled={verifying || !activationCode.trim()}>
+                    {verifying ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Confirm'}
                   </Button>
                 </div>
-              </div>
-            </form>
+              </form>
+            )}
+
+            {/* Navigation buttons */}
+            <div className="flex items-center justify-between pt-3 border-t border-zinc-800">
+              <Button variant="ghost" onClick={() => setCurrentStep(2)} type="button">
+                <ArrowLeft className="w-4 h-4 mr-1.5" />
+                Back to Install Command
+              </Button>
+              <Button variant="primary" type="button" onClick={() => setCurrentStep(4)}>
+                Proceed to Overview
+                <ArrowRight className="w-4 h-4 ml-1.5" />
+              </Button>
+            </div>
           </div>
         )}
 
         {/* =======================================================
-            4. CONNECTED SCREEN (Clean Verified Metrics)
+            4. CONNECTED SCREEN (Clean Summary)
            ======================================================= */}
         {currentStep === 4 && createdCluster && (
           <div className="space-y-5 text-center py-2">
@@ -622,17 +640,15 @@ curl -k -s -X POST "$SERVER/api/v1/agent/heartbeat" \\
             <div className="space-y-1">
               <h2 className="text-lg font-bold text-zinc-100 flex items-center justify-center gap-2">
                 <Check className="w-5 h-5 text-emerald-400 stroke-[3]" />
-                Cluster Connected
+                Cluster Successfully Connected
               </h2>
-              <p className="text-sm font-semibold text-sky-400 font-mono">
-                {createdCluster.name}
-              </p>
+              <p className="text-sm font-semibold text-sky-400 font-mono">{createdCluster.name}</p>
             </div>
 
             {/* Connected Cluster Telemetry Grid */}
-            <div className="p-4 bg-zinc-950 border border-zinc-800 rounded-xl grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs font-mono text-left">
+            <div className="p-4 bg-zinc-950 border border-zinc-800 rounded-xl grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono text-left">
               <div>
-                <div className="text-zinc-500">Agent</div>
+                <div className="text-zinc-500">Agent Status</div>
                 <div className="text-emerald-400 font-semibold flex items-center gap-1.5 mt-0.5">
                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                   ONLINE
@@ -641,102 +657,18 @@ curl -k -s -X POST "$SERVER/api/v1/agent/heartbeat" \\
 
               <div>
                 <div className="text-zinc-500">Kubernetes</div>
-                <div className="text-zinc-200 font-semibold mt-0.5">
-                  {createdCluster.k8sVersion || 'Detecting...'}
-                </div>
+                <div className="text-zinc-200 font-semibold mt-0.5">{createdCluster.k8sVersion || 'v1.30+'}</div>
               </div>
 
               <div>
                 <div className="text-zinc-500">Nodes</div>
-                <div className="text-zinc-200 font-semibold mt-0.5">
-                  {createdCluster.nodeCount ?? 0}
-                </div>
+                <div className="text-zinc-200 font-semibold mt-0.5">{createdCluster.nodeCount ?? 0}</div>
               </div>
 
               <div>
                 <div className="text-zinc-500">Pods</div>
-                <div className="text-zinc-200 font-semibold mt-0.5">
-                  {createdCluster.podCount ?? 1}
-                </div>
+                <div className="text-zinc-200 font-semibold mt-0.5">{createdCluster.podCount ?? 0}</div>
               </div>
-
-              <div>
-                <div className="text-zinc-500">Deployments</div>
-                <div className="text-zinc-200 font-semibold mt-0.5">
-                  1
-                </div>
-              </div>
-
-              <div>
-                <div className="text-zinc-500">Last heartbeat</div>
-                <div className="text-emerald-400 font-semibold mt-0.5">
-                  just now
-                </div>
-              </div>
-            </div>
-
-            {/* Telemetry script available anytime in Step 4 */}
-            <div className="text-left space-y-2 pt-1">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-mono text-zinc-300 font-medium flex items-center gap-1.5">
-                  <Terminal className="w-3.5 h-3.5 text-sky-400" />
-                  CLI Telemetry & Resource Sync Script
-                </span>
-                <span className="text-[10px] font-mono text-zinc-500">Execute anytime in cluster CLI</span>
-              </div>
-              <CodeBlock
-                language="bash"
-                title={`Cluster Telemetry Script (${createdCluster.name})`}
-                code={`TOKEN=$(kubectl get secret skyops-agent-credentials -n skyops-system -o jsonpath='{.data.SKYOPS_AGENT_TOKEN}' | base64 -d)
-SERVER=$(kubectl get secret skyops-agent-credentials -n skyops-system -o jsonpath='{.data.SKYOPS_SERVER_URL}' | base64 -d)
-CLUSTER_ID="${createdCluster.id}"
-
-# 1. Nodes & Pods
-K8S_VER=$(kubectl version -o json 2>/dev/null | jq -r '.serverVersion.gitVersion // "v1.35.1"')
-NODES=$(kubectl get nodes -o json | jq '[.items[] | {kind: "Node", name: .metadata.name, namespace: "", status: (.status.conditions[]? | select(.type=="Ready") | .type // "Ready"), health: (if (.status.conditions[]? | select(.type=="Ready" and .status=="True")) then "HEALTHY" else "CRITICAL" end), createdAt: (.metadata.creationTimestamp | fromdateiso8601 * 1000), updatedAt: (now * 1000), specSummary: {kubeletVersion: .status.nodeInfo.kubeletVersion, osImage: .status.nodeInfo.osImage}, statusSummary: {capacityCpu: .status.capacity.cpu, capacityMemory: .status.capacity.memory}}]')
-PODS=$(kubectl get pods -A -o json | jq '[.items[] | {kind: "Pod", name: .metadata.name, namespace: .metadata.namespace, status: .status.phase, health: (if .status.phase=="Running" then "HEALTHY" elif .status.phase=="Succeeded" then "HEALTHY" else "WARNING" end), createdAt: (.metadata.creationTimestamp | fromdateiso8601 * 1000), updatedAt: (now * 1000), specSummary: {nodeName: .spec.nodeName}, statusSummary: {podIP: .status.podIP, hostIP: .status.hostIP}}]')
-
-# 2. Deployments
-DEPS=$(kubectl get deployments -A -o json | jq '[.items[] | {kind: "Deployment", name: .metadata.name, namespace: .metadata.namespace, status: (if (.status.readyReplicas // 0) == .spec.replicas then "Available" else "Progressing" end), health: (if (.status.readyReplicas // 0) == .spec.replicas then "HEALTHY" else "WARNING" end), createdAt: (.metadata.creationTimestamp | fromdateiso8601 * 1000), updatedAt: (now * 1000), specSummary: {replicas: .spec.replicas}, statusSummary: {readyReplicas: (.status.readyReplicas // 0), updatedReplicas: (.status.updatedReplicas // 0)}}]')
-
-# 3. DaemonSets & StatefulSets
-DAEMONS=$(kubectl get daemonsets -A -o json | jq '[.items[] | {kind: "DaemonSet", name: .metadata.name, namespace: .metadata.namespace, status: (if (.status.numberReady // 0) == .status.desiredNumberScheduled then "Ready" else "Progressing" end), health: (if (.status.numberReady // 0) == .status.desiredNumberScheduled then "HEALTHY" else "WARNING" end), createdAt: (.metadata.creationTimestamp | fromdateiso8601 * 1000), updatedAt: (now * 1000), specSummary: {desired: .status.desiredNumberScheduled}, statusSummary: {numberReady: (.status.numberReady // 0)}}]')
-STS=$(kubectl get statefulsets -A -o json | jq '[.items[] | {kind: "StatefulSet", name: .metadata.name, namespace: .metadata.namespace, status: (if (.status.readyReplicas // 0) == .spec.replicas then "Ready" else "Progressing" end), health: (if (.status.readyReplicas // 0) == .spec.replicas then "HEALTHY" else "WARNING" end), createdAt: (.metadata.creationTimestamp | fromdateiso8601 * 1000), updatedAt: (now * 1000), specSummary: {replicas: .spec.replicas}, statusSummary: {readyReplicas: (.status.readyReplicas // 0)}}]')
-
-# 4. Storage PVCs
-PVCS=$(kubectl get pvc -A -o json | jq '[.items[] | {kind: "PersistentVolumeClaim", name: .metadata.name, namespace: .metadata.namespace, status: .status.phase, health: (if .status.phase=="Bound" then "HEALTHY" else "WARNING" end), createdAt: (.metadata.creationTimestamp | fromdateiso8601 * 1000), updatedAt: (now * 1000), specSummary: {storageClassName: .spec.storageClassName}, statusSummary: {capacity: .status.capacity.storage}}]')
-
-# 5. Cluster Events
-EVENTS=$(kubectl get events -A -o json | jq '[.items[:50][] | {kind: "Event", name: (.metadata.name // "event"), namespace: (.metadata.namespace // "default"), status: (.type // "Normal"), health: (if .type=="Warning" then "WARNING" else "HEALTHY" end), createdAt: ((.lastTimestamp // .metadata.creationTimestamp) | fromdateiso8601 * 1000), updatedAt: (now * 1000), specSummary: {reason: .reason, message: .message}, statusSummary: {source: (.source.component // "k8s")}}]')
-
-# 6. Transmit Telemetry Payload to SkyOps
-jq -c -n \\
-  --arg cid "$CLUSTER_ID" \\
-  --argjson ts "$(date +%s000 2>/dev/null || echo 0)" \\
-  --argjson n "$NODES" \\
-  --argjson p "$PODS" \\
-  --argjson d "$DEPS" \\
-  --argjson ds "$DAEMONS" \\
-  --argjson st "$STS" \\
-  --argjson pvc "$PVCS" \\
-  --argjson ev "$EVENTS" \\
-  '{clusterId: $cid, timestamp: $ts, resources: ($n + $p + $d + $ds + $st + $pvc + $ev)}' | \\
-curl -k -s -X POST "$SERVER/api/v1/agent/telemetry" \\
-  -H "Authorization: Bearer $TOKEN" \\
-  -H "Content-Type: application/json" \\
-  -d @-
-
-# 7. Update Agent Heartbeat
-jq -c -n \\
-  --arg ver "$K8S_VER" \\
-  --argjson nodes "$(echo "$NODES" | jq 'length')" \\
-  --argjson pods "$(echo "$PODS" | jq 'length')" \\
-  '{agentVersion: "v1.5.0", k8sVersion: $ver, nodeCount: $nodes, podCount: $pods}' | \\
-curl -k -s -X POST "$SERVER/api/v1/agent/heartbeat" \\
-  -H "Authorization: Bearer $TOKEN" \\
-  -H "Content-Type: application/json" \\
-  -d @-`}
-              />
             </div>
 
             <div className="pt-2">
@@ -745,7 +677,7 @@ curl -k -s -X POST "$SERVER/api/v1/agent/heartbeat" \\
                 onClick={handleOpenCluster}
                 className="w-full justify-center py-2.5 text-sm font-mono font-semibold"
               >
-                Open Cluster
+                Open Cluster Dashboard
               </Button>
             </div>
           </div>

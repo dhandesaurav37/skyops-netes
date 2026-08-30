@@ -275,10 +275,12 @@ export interface AgentManifestsResponse {
   clusterName: string;
   token: string;
   connectionCode?: string;
+  installKey?: string;
   serverUrl: string;
   agentVersion: string;
   namespace: string;
   kubectlManifest: string;
+  oneCommandInstall?: string;
   helmCommand: string;
   installCommand?: string;
   manifestDownloadUrl?: string;

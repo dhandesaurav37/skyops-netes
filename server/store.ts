@@ -22,7 +22,7 @@ import { AGENT_VERSION } from '../src/config/version';
 import { IncidentDetector } from './engine/detector';
 import { generateIncidentFingerprint } from './engine/fingerprint';
 
-class DataStore {
+export class DataStore {
   private users: Map<string, User> = new Map();
   private orgs: Map<string, Organization> = new Map();
   private members: Map<string, OrgMember[]> = new Map(); // orgId -> members
@@ -90,6 +90,9 @@ class DataStore {
         console.warn('[DataStore] Snapshot save notice:', err);
       }
     }, 100);
+    if (typeof this.saveTimeout.unref === 'function') {
+      this.saveTimeout.unref();
+    }
   }
 
   /**
@@ -113,7 +116,7 @@ class DataStore {
 
   // --- Heartbeat & Connection Monitoring ---
   private startHeartbeatMonitor() {
-    setInterval(() => {
+    const timer = setInterval(() => {
       const now = Date.now();
       for (const cluster of this.clusters.values()) {
         // If the cluster is in initial pending or awaiting confirmation, do not mark it offline
@@ -152,6 +155,9 @@ class DataStore {
         }
       }
     }, 15000);
+    if (typeof timer.unref === 'function') {
+      timer.unref();
+    }
   }
 
   // --- Auth & User / Organization Management ---
@@ -696,8 +702,8 @@ class DataStore {
       );
 
       if (existingIncident) {
-        // Increment occurrence, update technical details
-        existingIncident.occurrenceCount += 1;
+        // Active incident: update last seen, updated at, and technical details.
+        // DO NOT increment occurrenceCount on repeated telemetry observations of the same active failure.
         existingIncident.lastSeenAt = Date.now();
         existingIncident.updatedAt = Date.now();
         existingIncident.technicalDetails = {
@@ -705,48 +711,35 @@ class DataStore {
           ...detection.technicalDetails
         };
 
-        // Preserve the occurrence count on every pulse, but bound timeline noise
-        // to one repeat entry per five minutes.
-        const lastOccurrence = (this.incidentTimeline.get(existingIncident.id) || []).filter(event => event.type === 'OCCURRENCE').at(-1);
-        if (!lastOccurrence || Date.now() - lastOccurrence.timestamp >= 5 * 60 * 1000) {
-          this.addTimelineEvent(existingIncident.id, {
-            type: 'OCCURRENCE', actor: { type: 'AGENT', name: 'SkyOps Agent' },
-            description: `Observed repeat failure condition #${existingIncident.occurrenceCount} for ${resource.kind} ${resource.name}`,
-            metadata: { occurrenceCount: existingIncident.occurrenceCount }
-          });
-        }
-
         return existingIncident;
       }
 
-      // Check if there was a recently resolved incident (within 10 minutes) to reopen or create new
-      const recentResolved = Array.from(this.incidents.values()).find(
-        (inc) =>
-          inc.fingerprint === fingerprint &&
-          inc.status === 'RESOLVED' &&
-          inc.resolvedAt &&
-          Date.now() - inc.resolvedAt < 10 * 60 * 1000
+      // Check if there was a previously resolved incident with the same fingerprint
+      const resolvedIncident = Array.from(this.incidents.values()).find(
+        (inc) => inc.fingerprint === fingerprint && inc.status === 'RESOLVED'
       );
 
-      if (recentResolved) {
-        recentResolved.status = 'OPEN';
-        recentResolved.occurrenceCount += 1;
-        recentResolved.lastSeenAt = Date.now();
-        recentResolved.resolvedAt = null;
-        recentResolved.updatedAt = Date.now();
-        recentResolved.technicalDetails = {
-          ...recentResolved.technicalDetails,
+      if (resolvedIncident) {
+        // Same failure recurred after being resolved: reopen and increment occurrence counter
+        resolvedIncident.status = 'OPEN';
+        resolvedIncident.occurrenceCount += 1;
+        resolvedIncident.lastSeenAt = Date.now();
+        resolvedIncident.resolvedAt = null;
+        resolvedIncident.updatedAt = Date.now();
+        resolvedIncident.technicalDetails = {
+          ...resolvedIncident.technicalDetails,
           ...detection.technicalDetails
         };
 
-        this.addTimelineEvent(recentResolved.id, {
-          type: 'STATE_CHANGE',
+        this.addTimelineEvent(resolvedIncident.id, {
+          type: 'OCCURRENCE',
           actor: { type: 'AGENT', name: 'SkyOps Agent' },
-          description: `Incident reopened: failure condition detected again on ${resource.kind} ${resource.name}`
+          description: `Incident recurred: failure condition detected again on ${resource.kind} ${resource.name} (Occurrence #${resolvedIncident.occurrenceCount})`,
+          metadata: { occurrenceCount: resolvedIncident.occurrenceCount }
         });
 
         this.updateClusterIncidentCount(clusterId);
-        return recentResolved;
+        return resolvedIncident;
       }
 
       // Create brand-new Incident with atomic SKY-XXXX sequence
