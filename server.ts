@@ -427,15 +427,182 @@ app.post('/api/v1/agent/heartbeat', requireAgentAuth, (req: AuthenticatedAgentRe
 });
 
 app.post('/api/v1/agent/telemetry', requireAgentAuth, (req: AuthenticatedAgentRequest, res) => {
-  const { items, resources } = req.body;
+  const { items, resources, rawK8sList, rawK8s } = req.body;
   let extractedResources: KubernetesResource[] = [];
+
+  // Helper to map raw K8s resource object to SkyOps KubernetesResource
+  const mapRawK8sItem = (item: any): KubernetesResource | null => {
+    if (!item || !item.kind) return null;
+    const kind = item.kind;
+    const name = item.metadata?.name || item.name || 'unnamed';
+    const namespace = item.metadata?.namespace || item.namespace || '';
+    const createdTs = item.metadata?.creationTimestamp ? Date.parse(item.metadata.creationTimestamp) : Date.now();
+    const clusterId = req.clusterId!;
+    const id = item.metadata?.uid || `${clusterId}-${kind}-${namespace}-${name}`;
+
+    let status = 'Active';
+    let health: 'HEALTHY' | 'WARNING' | 'CRITICAL' = 'HEALTHY';
+    let conditions: any[] | undefined = undefined;
+    let containers: any[] | undefined = undefined;
+
+    if (Array.isArray(item.status?.conditions)) {
+      conditions = item.status.conditions.map((c: any) => ({
+        type: String(c.type || ''),
+        status: String(c.status || ''),
+        reason: c.reason ? String(c.reason) : undefined,
+        message: c.message ? String(c.message) : undefined,
+        lastTransitionTime: c.lastTransitionTime ? String(c.lastTransitionTime) : undefined
+      }));
+    }
+
+    if (kind === 'Node') {
+      const readyCond = conditions?.find((c) => c.type === 'Ready');
+      status = readyCond?.status === 'True' ? 'Ready' : 'NotReady';
+      health = status === 'Ready' ? 'HEALTHY' : 'CRITICAL';
+    } else if (kind === 'Pod') {
+      const rawContainers = [
+        ...(Array.isArray(item.status?.initContainerStatuses) ? item.status.initContainerStatuses : []),
+        ...(Array.isArray(item.status?.containerStatuses) ? item.status.containerStatuses : [])
+      ];
+
+      containers = rawContainers.map((cs: any) => {
+        let state = 'running';
+        let waitingReason: string | undefined;
+        let waitingMessage: string | undefined;
+        let terminationReason: string | undefined;
+        let exitCode: number | undefined;
+
+        if (cs.state?.waiting) {
+          state = 'waiting';
+          waitingReason = cs.state.waiting.reason;
+          waitingMessage = cs.state.waiting.message;
+        } else if (cs.state?.terminated) {
+          state = 'terminated';
+          terminationReason = cs.state.terminated.reason;
+          exitCode = cs.state.terminated.exitCode;
+          waitingMessage = cs.state.terminated.message;
+        } else if (cs.state?.running) {
+          state = 'running';
+        }
+
+        if (!waitingReason && cs.lastState?.terminated) {
+          terminationReason = terminationReason || cs.lastState.terminated.reason;
+          if (exitCode === undefined) exitCode = cs.lastState.terminated.exitCode;
+        }
+
+        return {
+          name: String(cs.name || 'main'),
+          image: String(cs.image || item.spec?.containers?.find((c: any) => c.name === cs.name)?.image || ''),
+          restartCount: Number(cs.restartCount || 0),
+          ready: Boolean(cs.ready),
+          state,
+          waitingReason,
+          waitingMessage,
+          terminationReason,
+          exitCode
+        };
+      });
+
+      // Calculate displayed Pod status exactly like kubectl
+      let podStatus = item.status?.phase || 'Running';
+      let hasError = false;
+
+      for (const c of containers) {
+        if (c.waitingReason) {
+          podStatus = c.waitingReason;
+          hasError = true;
+          break;
+        }
+        if (c.terminationReason && c.terminationReason !== 'Completed') {
+          podStatus = c.terminationReason;
+          hasError = true;
+          break;
+        }
+        if (c.exitCode !== undefined && c.exitCode !== 0) {
+          podStatus = 'Error';
+          hasError = true;
+          break;
+        }
+      }
+
+      status = podStatus;
+      if (!hasError && (podStatus === 'Running' || podStatus === 'Succeeded')) {
+        health = 'HEALTHY';
+      } else if (podStatus === 'Pending' || podStatus === 'ContainerCreating') {
+        health = 'WARNING';
+      } else {
+        health = 'CRITICAL';
+      }
+    } else if (kind === 'Deployment') {
+      const desired = Number(item.spec?.replicas ?? 1);
+      const ready = Number(item.status?.readyReplicas ?? item.status?.availableReplicas ?? 0);
+      const available = Number(item.status?.availableReplicas ?? item.status?.readyReplicas ?? 0);
+      status = ready >= desired || available >= desired ? 'Available' : 'Progressing';
+      health = ready >= desired || available >= desired ? 'HEALTHY' : ready === 0 && available === 0 ? 'CRITICAL' : 'WARNING';
+    } else if (kind === 'DaemonSet') {
+      const desired = Number(item.status?.desiredNumberScheduled ?? 1);
+      const ready = Number(item.status?.numberReady ?? 0);
+      status = ready >= desired ? 'Ready' : 'Progressing';
+      health = ready >= desired ? 'HEALTHY' : 'WARNING';
+    } else if (kind === 'StatefulSet') {
+      const desired = Number(item.spec?.replicas ?? 1);
+      const ready = Number(item.status?.readyReplicas ?? 0);
+      status = ready >= desired ? 'Ready' : 'Progressing';
+      health = ready >= desired ? 'HEALTHY' : 'WARNING';
+    } else if (kind === 'PersistentVolumeClaim') {
+      status = item.status?.phase || 'Bound';
+      health = status === 'Bound' ? 'HEALTHY' : 'WARNING';
+    } else if (kind === 'Event') {
+      status = item.type || 'Normal';
+      health = item.type === 'Warning' ? 'WARNING' : 'HEALTHY';
+    }
+
+    return {
+      id,
+      clusterId,
+      kind,
+      name,
+      namespace,
+      status,
+      health,
+      createdAt: isNaN(createdTs) ? Date.now() : createdTs,
+      updatedAt: Date.now(),
+      specSummary: item.spec || { message: item.message, reason: item.reason },
+      statusSummary: item.status || { source: item.source?.component },
+      conditions,
+      containers
+    };
+  };
 
   if (Array.isArray(resources)) {
     extractedResources = resources as KubernetesResource[];
+  } else if (rawK8sList && Array.isArray(rawK8sList.items)) {
+    for (const rawItem of rawK8sList.items) {
+      const mapped = mapRawK8sItem(rawItem);
+      if (mapped) extractedResources.push(mapped);
+    }
+  } else if (req.body && req.body.kind === 'List' && Array.isArray(req.body.items)) {
+    for (const rawItem of req.body.items) {
+      const mapped = mapRawK8sItem(rawItem);
+      if (mapped) extractedResources.push(mapped);
+    }
+  } else if (rawK8s && typeof rawK8s === 'object') {
+    for (const key of Object.keys(rawK8s)) {
+      const sub = rawK8s[key];
+      if (sub && Array.isArray(sub.items)) {
+        for (const rawItem of sub.items) {
+          const mapped = mapRawK8sItem(rawItem);
+          if (mapped) extractedResources.push(mapped);
+        }
+      }
+    }
   } else if (Array.isArray(items)) {
     for (const item of items) {
       if (item.payload && item.payload.kind && item.payload.name) {
         extractedResources.push(item.payload as KubernetesResource);
+      } else if (item.kind && item.metadata) {
+        const mapped = mapRawK8sItem(item);
+        if (mapped) extractedResources.push(mapped);
       }
     }
   }
@@ -452,7 +619,8 @@ app.post('/api/v1/agent/telemetry', requireAgentAuth, (req: AuthenticatedAgentRe
   res.json({
     status: 'PROCESSED',
     clusterId: req.clusterId,
-    timestamp: Date.now()
+    timestamp: Date.now(),
+    resourceCount: extractedResources.length
   });
 });
 
@@ -559,6 +727,31 @@ app.post(
     }
 
     res.status(201).json({ note });
+  }
+);
+
+app.delete(
+  '/api/v1/incidents/:id',
+  requireUserAuth,
+  requireOrgMembership,
+  requireRole(['OWNER', 'ADMIN', 'ENGINEER']),
+  (req: AuthenticatedUserRequest, res) => {
+    const success = store.deleteIncident(req.params.id, req.orgId!);
+    if (!success) {
+      return res.status(404).json({ error: 'Incident not found' });
+    }
+    res.json({ status: 'DELETED', id: req.params.id });
+  }
+);
+
+app.delete(
+  '/api/v1/incidents',
+  requireUserAuth,
+  requireOrgMembership,
+  requireRole(['OWNER', 'ADMIN']),
+  (req: AuthenticatedUserRequest, res) => {
+    const deletedCount = store.clearAllIncidents(req.orgId!);
+    res.json({ status: 'CLEARED', count: deletedCount });
   }
 );
 

@@ -55,9 +55,15 @@ export class IncidentDetector {
     const containers = resource.containers || [];
     const events = resource.events || [];
 
-    // 1. Check for CrashLoopBackOff
+    // 1. Check for CrashLoopBackOff or Container Error
     for (const c of containers) {
-      if (c.waitingReason === 'CrashLoopBackOff' || (c.restartCount >= 2 && c.state === 'waiting')) {
+      if (
+        c.waitingReason === 'CrashLoopBackOff' ||
+        (c.restartCount >= 1 && (c.state === 'waiting' || c.waitingReason === 'CrashLoopBackOff')) ||
+        (c.terminationReason === 'Error' && c.exitCode !== undefined && c.exitCode !== 0) ||
+        resource.status === 'CrashLoopBackOff' ||
+        resource.status === 'Error'
+      ) {
         return {
           detected: true,
           incidentType: 'CrashLoopBackOff',
@@ -69,8 +75,8 @@ export class IncidentDetector {
             image: c.image,
             restartCount: c.restartCount,
             exitCode: c.exitCode,
-            reason: c.waitingReason || 'CrashLoopBackOff',
-            message: c.waitingMessage || `Container ${c.name} is restarting repeatedly`,
+            reason: c.waitingReason || c.terminationReason || 'CrashLoopBackOff',
+            message: c.waitingMessage || `Container ${c.name} is restarting repeatedly (exit code: ${c.exitCode ?? 'unknown'})`,
             nodeName: String(resource.specSummary?.nodeName || 'unknown'),
             containers,
             conditions: resource.conditions,
@@ -80,20 +86,28 @@ export class IncidentDetector {
       }
     }
 
-    // 2. Check for ImagePullBackOff / ErrImagePull
+    // 2. Check for ImagePullBackOff / ErrImagePull / Image errors
     for (const c of containers) {
-      if (c.waitingReason === 'ImagePullBackOff' || c.waitingReason === 'ErrImagePull') {
+      const isImageError =
+        c.waitingReason === 'ImagePullBackOff' ||
+        c.waitingReason === 'ErrImagePull' ||
+        c.waitingReason === 'InvalidImageName' ||
+        resource.status === 'ImagePullBackOff' ||
+        resource.status === 'ErrImagePull' ||
+        resource.status === 'InvalidImageName';
+
+      if (isImageError) {
         return {
           detected: true,
           incidentType: 'ImagePullBackOff',
-          title: `Image pull failure in pod ${resource.name} (Container: ${c.name})`,
+          title: `Image pull failure in pod ${resource.name} (${c.waitingReason || resource.status}: ${c.name})`,
           severity: 'HIGH',
           technicalDetails: {
             podName: resource.name,
             containerName: c.name,
             image: c.image,
-            reason: c.waitingReason,
-            message: c.waitingMessage || `Failed to pull image ${c.image}`,
+            reason: c.waitingReason || resource.status || 'ImagePullBackOff',
+            message: c.waitingMessage || `Failed to pull container image ${c.image}`,
             nodeName: String(resource.specSummary?.nodeName || 'unknown'),
             containers,
             conditions: resource.conditions,
@@ -101,6 +115,43 @@ export class IncidentDetector {
           }
         };
       }
+    }
+
+    // Fallback if containers list was empty but pod status itself indicates crash/image failure
+    if (resource.status === 'ImagePullBackOff' || resource.status === 'ErrImagePull') {
+      return {
+        detected: true,
+        incidentType: 'ImagePullBackOff',
+        title: `Image pull failure in pod ${resource.name}`,
+        severity: 'HIGH',
+        technicalDetails: {
+          podName: resource.name,
+          reason: resource.status,
+          message: `Pod ${resource.name} failed to pull container image`,
+          nodeName: String(resource.specSummary?.nodeName || 'unknown'),
+          containers,
+          conditions: resource.conditions,
+          events
+        }
+      };
+    }
+
+    if (resource.status === 'CrashLoopBackOff' || resource.status === 'Error') {
+      return {
+        detected: true,
+        incidentType: 'CrashLoopBackOff',
+        title: `Pod ${resource.name} is failing / crashing`,
+        severity: 'MEDIUM',
+        technicalDetails: {
+          podName: resource.name,
+          reason: resource.status,
+          message: `Pod ${resource.name} container process exited with error status`,
+          nodeName: String(resource.specSummary?.nodeName || 'unknown'),
+          containers,
+          conditions: resource.conditions,
+          events
+        }
+      };
     }
 
     // 3. Check for OOMKilled
@@ -272,18 +323,28 @@ export class IncidentDetector {
    */
   private static evaluateDeployment(resource: KubernetesResource): DetectionResult | null {
     const desired = Number(resource.specSummary?.replicas ?? 1);
-    const available = Number(resource.statusSummary?.availableReplicas ?? 0);
-    const ready = Number(resource.statusSummary?.readyReplicas ?? 0);
-    const updated = Number(resource.statusSummary?.updatedReplicas ?? 0);
+    const ready = Number(resource.statusSummary?.readyReplicas ?? resource.statusSummary?.availableReplicas ?? 0);
+    const available = Number(resource.statusSummary?.availableReplicas ?? resource.statusSummary?.readyReplicas ?? 0);
+    const updated = Number(resource.statusSummary?.updatedReplicas ?? ready);
     const conditions = resource.conditions || [];
     const events = resource.events || [];
 
-    if (desired > 0 && available < desired) {
-      const isCompleteOutage = available === 0;
+    // Check Kubernetes Deployment Conditions
+    const isAvailableCondition = conditions.some((c) => c.type === 'Available' && (c.status === 'True' || c.status === 'true'));
+    const isProgressingCondition = conditions.some((c) => c.type === 'Progressing' && (c.status === 'True' || c.status === 'true') && c.reason === 'NewReplicaSetAvailable');
+    const isExplicitlyFailed = conditions.some((c) => (c.type === 'Available' && c.status === 'False') || (c.type === 'ReplicaFailure' && c.status === 'True'));
+
+    // If Kubernetes explicitly marks the deployment as Available or progressing normally with ready replicas, it is healthy
+    if (isAvailableCondition || (ready >= desired && desired > 0) || (available >= desired && desired > 0)) {
+      return null;
+    }
+
+    if (desired > 0 && (isExplicitlyFailed || (ready === 0 && available === 0 && !isProgressingCondition) || (ready < desired && available < desired && !isAvailableCondition))) {
+      const isCompleteOutage = ready === 0 && available === 0;
       return {
         detected: true,
         incidentType: 'DeploymentDegraded',
-        title: `Deployment ${resource.name} is degraded (${available}/${desired} replicas available)`,
+        title: `Deployment ${resource.name} is degraded (${ready}/${desired} ready)`,
         severity: isCompleteOutage ? 'CRITICAL' : 'HIGH',
         technicalDetails: {
           desiredReplicas: desired,
@@ -291,7 +352,7 @@ export class IncidentDetector {
           readyReplicas: ready,
           updatedReplicas: updated,
           reason: isCompleteOutage ? 'DeploymentUnavailable' : 'DeploymentDegraded',
-          message: `Expected ${desired} available replicas, but only ${available} are currently healthy and available.`,
+          message: `Expected ${desired} ready replicas, but currently only ${ready} are ready.`,
           conditions,
           events
         }
@@ -455,11 +516,15 @@ export class IncidentDetector {
       }
       case 'DeploymentDegraded': {
         const desired = Number(resource.specSummary?.replicas ?? 1);
-        const available = Number(resource.statusSummary?.availableReplicas ?? 0);
-        if (desired > 0 && available >= desired) {
+        const ready = Number(resource.statusSummary?.readyReplicas ?? resource.statusSummary?.availableReplicas ?? 0);
+        const available = Number(resource.statusSummary?.availableReplicas ?? resource.statusSummary?.readyReplicas ?? 0);
+        const conditions = resource.conditions || [];
+        const isAvailableCondition = conditions.some((c) => c.type === 'Available' && (c.status === 'True' || c.status === 'true'));
+
+        if (isAvailableCondition || (desired > 0 && (available >= desired || ready >= desired)) || resource.status === 'Available') {
           return {
             recovered: true,
-            reason: `Deployment ${resource.name} replicas fully restored (${available}/${desired} available)`
+            reason: `Deployment ${resource.name} replicas fully restored and marked Available`
           };
         }
         break;

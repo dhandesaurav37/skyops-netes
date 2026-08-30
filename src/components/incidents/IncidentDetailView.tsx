@@ -13,6 +13,7 @@ import {
   Server,
   Shield,
   Tag,
+  Trash2,
   User,
   UserCheck
 } from 'lucide-react';
@@ -48,6 +49,7 @@ export const IncidentDetailView: React.FC<IncidentDetailViewProps> = ({
   const [newNoteContent, setNewNoteContent] = useState('');
   const [isSubmittingNote, setIsSubmittingNote] = useState(false);
   const [statusUpdateLoading, setStatusUpdateLoading] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const fetchIncidentData = async () => {
     try {
@@ -66,6 +68,19 @@ export const IncidentDetailView: React.FC<IncidentDetailViewProps> = ({
   useEffect(() => {
     fetchIncidentData();
   }, [incidentId]);
+
+  const handleDelete = async () => {
+    if (!incident || !canEditIncidents) return;
+    if (!window.confirm(`Are you sure you want to delete incident ticket ${incident.id}?`)) return;
+    try {
+      setIsDeleting(true);
+      await api.deleteIncident(incident.id);
+      onBack();
+    } catch (err) {
+      console.error('Failed to delete incident:', err);
+      setIsDeleting(false);
+    }
+  };
 
   const handleStatusChange = async (newStatus: IncidentStatus) => {
     if (!incident || !canEditIncidents) return;
@@ -219,6 +234,19 @@ export const IncidentDetailView: React.FC<IncidentDetailViewProps> = ({
                 <option value="CLOSED">CLOSED</option>
               </select>
             </div>
+          )}
+
+          {canEditIncidents && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleDelete}
+              disabled={isDeleting}
+              icon={<Trash2 className="w-3.5 h-3.5 text-rose-400" />}
+              className="hover:border-rose-800 text-rose-300"
+            >
+              Delete
+            </Button>
           )}
         </div>
       </div>

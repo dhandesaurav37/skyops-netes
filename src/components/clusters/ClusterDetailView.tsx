@@ -15,6 +15,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   Terminal,
+  Trash2,
   Unplug
 } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
@@ -29,12 +30,13 @@ interface ClusterDetailViewProps {
   clusterId: string;
   onBack: () => void;
   onSelectIncident?: (id: string) => void;
+  onDeleteCluster?: (clusterId: string) => Promise<void> | void;
 }
 
 type ResourceTab = 'pods' | 'nodes' | 'deployments' | 'statefulsets' | 'pvcs' | 'events' | 'agent';
 
-export const ClusterDetailView: React.FC<ClusterDetailViewProps> = ({ clusterId, onBack, onSelectIncident }) => {
-  const { role } = useAuth();
+export const ClusterDetailView: React.FC<ClusterDetailViewProps> = ({ clusterId, onBack, onSelectIncident, onDeleteCluster }) => {
+  const { role, canDeleteClusters } = useAuth();
   const canManage = role === 'OWNER' || role === 'ADMIN';
 
   const [cluster, setCluster] = useState<Cluster | null>(null);
@@ -53,6 +55,13 @@ export const ClusterDetailView: React.FC<ClusterDetailViewProps> = ({ clusterId,
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
   const [regenerateLoading, setRegenerateLoading] = useState(false);
   const [disconnectLoading, setDisconnectLoading] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+
+  // Confirmation Modals
+  const [confirmRegenOpen, setConfirmRegenOpen] = useState(false);
+  const [confirmDisconnectOpen, setConfirmDisconnectOpen] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [manualRefreshing, setManualRefreshing] = useState(false);
 
   const fetchDetails = async (isBackground = false) => {
     try {
@@ -68,10 +77,33 @@ export const ClusterDetailView: React.FC<ClusterDetailViewProps> = ({ clusterId,
       if (manifestsRes.connectionCode) {
         setInputConnectionCode(manifestsRes.connectionCode);
       }
-    } catch (err) {
+      return { cluster: clusterRes, resources: resourcesRes };
+    } catch (err: any) {
       console.error('Error fetching cluster details:', err);
+      if (!isBackground) {
+        setActionError(err?.message || 'Failed to fetch cluster telemetry');
+      }
+      throw err;
     } finally {
       if (!isBackground) setLoading(false);
+    }
+  };
+
+  const handleManualRefresh = async () => {
+    try {
+      setManualRefreshing(true);
+      setActionError(null);
+      const result = await fetchDetails(false);
+      const podCount = result.resources.filter((r) => r.kind === 'Pod').length;
+      const nodeCount = result.resources.filter((r) => r.kind === 'Node').length;
+      setActionSuccess(`Telemetry refreshed: ${result.resources.length} resources loaded (${podCount} pods, ${nodeCount} nodes).`);
+      setTimeout(() => {
+        setActionSuccess((prev) => (prev?.startsWith('Telemetry refreshed') ? null : prev));
+      }, 4000);
+    } catch (err: any) {
+      setActionError(err?.message || 'Failed to refresh cluster telemetry');
+    } finally {
+      setManualRefreshing(false);
     }
   };
 
@@ -103,10 +135,6 @@ export const ClusterDetailView: React.FC<ClusterDetailViewProps> = ({ clusterId,
   };
 
   const handleRegenerateCredentials = async () => {
-    if (!confirm('Regenerating credentials will invalidate the existing agent token and require reinstalling or updating the agent secret. Continue?')) {
-      return;
-    }
-
     try {
       setRegenerateLoading(true);
       setActionError(null);
@@ -116,6 +144,7 @@ export const ClusterDetailView: React.FC<ClusterDetailViewProps> = ({ clusterId,
         setInputConnectionCode(res.connectionCode);
       }
       setActionSuccess('Agent credentials regenerated. Please update your cluster secret.');
+      setConfirmRegenOpen(false);
       fetchDetails();
     } catch (err: any) {
       setActionError(err.message || 'Failed to regenerate credentials');
@@ -125,20 +154,35 @@ export const ClusterDetailView: React.FC<ClusterDetailViewProps> = ({ clusterId,
   };
 
   const handleDisconnect = async () => {
-    if (!confirm(`Are you sure you want to disconnect agent from cluster ${cluster?.name}? Incident history will be preserved.`)) {
-      return;
-    }
-
     try {
       setDisconnectLoading(true);
       setActionError(null);
       await api.disconnectCluster(clusterId);
       setActionSuccess('Cluster agent disconnected.');
+      setConfirmDisconnectOpen(false);
       fetchDetails();
     } catch (err: any) {
       setActionError(err.message || 'Failed to disconnect cluster');
     } finally {
       setDisconnectLoading(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    try {
+      setDeleteLoading(true);
+      setActionError(null);
+      if (onDeleteCluster) {
+        await onDeleteCluster(clusterId);
+      } else {
+        await api.deleteCluster(clusterId);
+      }
+      setConfirmDeleteOpen(false);
+      onBack();
+    } catch (err: any) {
+      setActionError(err.message || 'Failed to delete cluster');
+    } finally {
+      setDeleteLoading(false);
     }
   };
 
@@ -214,14 +258,29 @@ export const ClusterDetailView: React.FC<ClusterDetailViewProps> = ({ clusterId,
           </div>
         </div>
 
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={fetchDetails}
-          icon={<RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />}
-        >
-          Refresh Telemetry
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            id="cluster-refresh-telemetry-btn"
+            variant="outline"
+            size="sm"
+            onClick={handleManualRefresh}
+            disabled={manualRefreshing || loading}
+            icon={<RefreshCw className={`w-3.5 h-3.5 ${manualRefreshing ? 'animate-spin text-sky-400' : ''}`} />}
+          >
+            {manualRefreshing ? 'Refreshing...' : 'Refresh Telemetry'}
+          </Button>
+          {canDeleteClusters && (
+            <Button
+              id="cluster-delete-btn"
+              variant="danger"
+              size="sm"
+              onClick={() => setConfirmDeleteOpen(true)}
+              icon={<Trash2 className="w-3.5 h-3.5" />}
+            >
+              Delete Cluster
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Action Alerts */}
@@ -380,7 +439,7 @@ export const ClusterDetailView: React.FC<ClusterDetailViewProps> = ({ clusterId,
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={handleRegenerateCredentials}
+                  onClick={() => setConfirmRegenOpen(true)}
                   disabled={regenerateLoading}
                   icon={regenerateLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
                 >
@@ -389,7 +448,7 @@ export const ClusterDetailView: React.FC<ClusterDetailViewProps> = ({ clusterId,
                 <Button
                   variant="danger"
                   size="sm"
-                  onClick={handleDisconnect}
+                  onClick={() => setConfirmDisconnectOpen(true)}
                   disabled={disconnectLoading}
                   icon={disconnectLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Unplug className="w-3.5 h-3.5" />}
                 >
@@ -433,6 +492,59 @@ export const ClusterDetailView: React.FC<ClusterDetailViewProps> = ({ clusterId,
                   title="Quick Install Command"
                 />
               )}
+              <CodeBlock
+                code={`TOKEN=$(kubectl get secret skyops-agent-credentials -n skyops-system -o jsonpath='{.data.SKYOPS_AGENT_TOKEN}' | base64 -d)
+SERVER=$(kubectl get secret skyops-agent-credentials -n skyops-system -o jsonpath='{.data.SKYOPS_SERVER_URL}' | base64 -d)
+CLUSTER_ID="${cluster.id}"
+
+# 1. Nodes & Pods
+K8S_VER=$(kubectl version -o json 2>/dev/null | jq -r '.serverVersion.gitVersion // "v1.35.1"')
+NODES=$(kubectl get nodes -o json | jq '[.items[] | {kind: "Node", name: .metadata.name, namespace: "", status: (.status.conditions[]? | select(.type=="Ready") | .type // "Ready"), health: (if (.status.conditions[]? | select(.type=="Ready" and .status=="True")) then "HEALTHY" else "CRITICAL" end), createdAt: (.metadata.creationTimestamp | fromdateiso8601 * 1000), updatedAt: (now * 1000), specSummary: {kubeletVersion: .status.nodeInfo.kubeletVersion, osImage: .status.nodeInfo.osImage}, statusSummary: {capacityCpu: .status.capacity.cpu, capacityMemory: .status.capacity.memory}}]')
+PODS=$(kubectl get pods -A -o json | jq '[.items[] | {kind: "Pod", name: .metadata.name, namespace: .metadata.namespace, status: .status.phase, health: (if .status.phase=="Running" then "HEALTHY" elif .status.phase=="Succeeded" then "HEALTHY" else "WARNING" end), createdAt: (.metadata.creationTimestamp | fromdateiso8601 * 1000), updatedAt: (now * 1000), specSummary: {nodeName: .spec.nodeName}, statusSummary: {podIP: .status.podIP, hostIP: .status.hostIP}}]')
+
+# 2. Deployments
+DEPS=$(kubectl get deployments -A -o json | jq '[.items[] | {kind: "Deployment", name: .metadata.name, namespace: .metadata.namespace, status: (if (.status.readyReplicas // 0) == .spec.replicas then "Available" else "Progressing" end), health: (if (.status.readyReplicas // 0) == .spec.replicas then "HEALTHY" else "WARNING" end), createdAt: (.metadata.creationTimestamp | fromdateiso8601 * 1000), updatedAt: (now * 1000), specSummary: {replicas: .spec.replicas}, statusSummary: {readyReplicas: (.status.readyReplicas // 0), updatedReplicas: (.status.updatedReplicas // 0)}}]')
+
+# 3. DaemonSets & StatefulSets
+DAEMONS=$(kubectl get daemonsets -A -o json | jq '[.items[] | {kind: "DaemonSet", name: .metadata.name, namespace: .metadata.namespace, status: (if (.status.numberReady // 0) == .status.desiredNumberScheduled then "Ready" else "Progressing" end), health: (if (.status.numberReady // 0) == .status.desiredNumberScheduled then "HEALTHY" else "WARNING" end), createdAt: (.metadata.creationTimestamp | fromdateiso8601 * 1000), updatedAt: (now * 1000), specSummary: {desired: .status.desiredNumberScheduled}, statusSummary: {numberReady: (.status.numberReady // 0)}}]')
+STS=$(kubectl get statefulsets -A -o json | jq '[.items[] | {kind: "StatefulSet", name: .metadata.name, namespace: .metadata.namespace, status: (if (.status.readyReplicas // 0) == .spec.replicas then "Ready" else "Progressing" end), health: (if (.status.readyReplicas // 0) == .spec.replicas then "HEALTHY" else "WARNING" end), createdAt: (.metadata.creationTimestamp | fromdateiso8601 * 1000), updatedAt: (now * 1000), specSummary: {replicas: .spec.replicas}, statusSummary: {readyReplicas: (.status.readyReplicas // 0)}}]')
+
+# 4. Storage PVCs
+PVCS=$(kubectl get pvc -A -o json | jq '[.items[] | {kind: "PersistentVolumeClaim", name: .metadata.name, namespace: .metadata.namespace, status: .status.phase, health: (if .status.phase=="Bound" then "HEALTHY" else "WARNING" end), createdAt: (.metadata.creationTimestamp | fromdateiso8601 * 1000), updatedAt: (now * 1000), specSummary: {storageClassName: .spec.storageClassName}, statusSummary: {capacity: .status.capacity.storage}}]')
+
+# 5. Cluster Events
+EVENTS=$(kubectl get events -A -o json | jq '[.items[:50][] | {kind: "Event", name: (.metadata.name // "event"), namespace: (.metadata.namespace // "default"), status: (.type // "Normal"), health: (if .type=="Warning" then "WARNING" else "HEALTHY" end), createdAt: ((.lastTimestamp // .metadata.creationTimestamp) | fromdateiso8601 * 1000), updatedAt: (now * 1000), specSummary: {reason: .reason, message: .message}, statusSummary: {source: (.source.component // "k8s")}}]')
+
+# 6. Transmit Telemetry Payload to SkyOps
+jq -c -n \\
+  --arg cid "$CLUSTER_ID" \\
+  --argjson ts "$(date +%s000 2>/dev/null || echo 0)" \\
+  --argjson n "$NODES" \\
+  --argjson p "$PODS" \\
+  --argjson d "$DEPS" \\
+  --argjson ds "$DAEMONS" \\
+  --argjson st "$STS" \\
+  --argjson pvc "$PVCS" \\
+  --argjson ev "$EVENTS" \\
+  '{clusterId: $cid, timestamp: $ts, resources: ($n + $p + $d + $ds + $st + $pvc + $ev)}' | \\
+curl -k -s -X POST "$SERVER/api/v1/agent/telemetry" \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d @-
+
+# 7. Update Agent Heartbeat
+jq -c -n \\
+  --arg ver "$K8S_VER" \\
+  --argjson nodes "$(echo "$NODES" | jq 'length')" \\
+  --argjson pods "$(echo "$PODS" | jq 'length')" \\
+  '{agentVersion: "v1.5.0", k8sVersion: $ver, nodeCount: $nodes, podCount: $pods}' | \\
+curl -k -s -X POST "$SERVER/api/v1/agent/heartbeat" \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d @-`}
+                language="bash"
+                title="CLI Manual Telemetry & Sync Script (Instant Verification)"
+              />
               <CodeBlock code={manifestData.kubectlManifest} language="yaml" title="kubectl apply manifest" />
               <CodeBlock code={manifestData.helmCommand} language="bash" title="Helm Upgrade / Install" />
             </div>
@@ -730,6 +842,114 @@ export const ClusterDetailView: React.FC<ClusterDetailViewProps> = ({ clusterId,
               </Button>
             </div>
           </form>
+        </Modal>
+      )}
+
+      {/* Confirm Regenerate Modal */}
+      {confirmRegenOpen && (
+        <Modal
+          isOpen={confirmRegenOpen}
+          onClose={() => !regenerateLoading && setConfirmRegenOpen(false)}
+          title="Regenerate Agent Credentials"
+          maxWidth="md"
+        >
+          <div className="space-y-4">
+            <div className="flex items-start gap-3 p-3.5 bg-amber-950/20 border border-amber-900/30 rounded-lg text-amber-300">
+              <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+              <div className="text-xs space-y-1">
+                <p className="font-semibold text-amber-200">Invalidate Current Agent Token?</p>
+                <p className="text-zinc-400">
+                  Regenerating credentials will invalidate the existing cluster token immediately. You will need to re-apply the generated Kubernetes secret to reconnect the live agent.
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="ghost" size="sm" disabled={regenerateLoading} onClick={() => setConfirmRegenOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                disabled={regenerateLoading}
+                onClick={handleRegenerateCredentials}
+                icon={regenerateLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+              >
+                {regenerateLoading ? 'Regenerating...' : 'Regenerate Credentials'}
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Confirm Disconnect Modal */}
+      {confirmDisconnectOpen && (
+        <Modal
+          isOpen={confirmDisconnectOpen}
+          onClose={() => !disconnectLoading && setConfirmDisconnectOpen(false)}
+          title="Disconnect Cluster Agent"
+          maxWidth="md"
+        >
+          <div className="space-y-4">
+            <div className="flex items-start gap-3 p-3.5 bg-amber-950/20 border border-amber-900/30 rounded-lg text-amber-300">
+              <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+              <div className="text-xs space-y-1">
+                <p className="font-semibold text-amber-200">Disconnect Agent from {cluster.name}?</p>
+                <p className="text-zinc-400">
+                  The agent will be marked as disconnected and telemetry streaming will pause. Incident histories and logs are preserved.
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="ghost" size="sm" disabled={disconnectLoading} onClick={() => setConfirmDisconnectOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                disabled={disconnectLoading}
+                onClick={handleDisconnect}
+                icon={disconnectLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Unplug className="w-3.5 h-3.5" />}
+              >
+                {disconnectLoading ? 'Disconnecting...' : 'Disconnect Agent'}
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Confirm Delete Modal */}
+      {confirmDeleteOpen && (
+        <Modal
+          isOpen={confirmDeleteOpen}
+          onClose={() => !deleteLoading && setConfirmDeleteOpen(false)}
+          title="Delete Kubernetes Cluster"
+          maxWidth="md"
+        >
+          <div className="space-y-4">
+            <div className="flex items-start gap-3 p-3.5 bg-rose-950/20 border border-rose-900/30 rounded-lg text-rose-300">
+              <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+              <div className="text-xs space-y-1">
+                <p className="font-semibold text-rose-200">Permanent Deletion</p>
+                <p className="text-zinc-400">
+                  Are you sure you want to permanently delete <span className="font-mono text-zinc-200 font-bold">{cluster.name}</span> ({cluster.id})? All agent tokens, telemetry snapshots, and resource tracking will be removed.
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="ghost" size="sm" disabled={deleteLoading} onClick={() => setConfirmDeleteOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                disabled={deleteLoading}
+                onClick={handleDelete}
+                icon={deleteLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+              >
+                {deleteLoading ? 'Deleting Cluster...' : 'Delete Cluster'}
+              </Button>
+            </div>
+          </div>
         </Modal>
       )}
     </div>

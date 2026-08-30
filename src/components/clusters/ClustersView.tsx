@@ -3,6 +3,7 @@ import {
   ArrowRight,
   Boxes,
   Clock,
+  Loader2,
   MoreVertical,
   Plus,
   RefreshCw,
@@ -14,13 +15,13 @@ import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { Cluster } from '../../types/index';
 import { ClusterStatusBadge } from '../common/Badges';
-import { Button, EmptyState } from '../common/UI';
+import { Button, EmptyState, Modal } from '../common/UI';
 
 interface ClustersViewProps {
   clusters: Cluster[];
   onSelectCluster: (clusterId: string) => void;
   onOpenAddCluster: () => void;
-  onDeleteCluster: (clusterId: string) => void;
+  onDeleteCluster: (clusterId: string) => Promise<void> | void;
   onRefresh: () => void;
   loading: boolean;
 }
@@ -35,6 +36,9 @@ export const ClustersView: React.FC<ClustersViewProps> = ({
 }) => {
   const { canDeleteClusters } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
+  const [clusterToDelete, setClusterToDelete] = useState<Cluster | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const formatTimeAgo = (ts?: number) => {
     if (!ts) return 'Never';
@@ -52,6 +56,20 @@ export const ClustersView: React.FC<ClustersViewProps> = ({
       c.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
       (c.description && c.description.toLowerCase().includes(searchTerm.toLowerCase()))
   );
+
+  const handleDeleteConfirm = async () => {
+    if (!clusterToDelete) return;
+    try {
+      setIsDeleting(true);
+      setDeleteError(null);
+      await onDeleteCluster(clusterToDelete.id);
+      setClusterToDelete(null);
+    } catch (err: any) {
+      setDeleteError(err?.message || 'Failed to delete cluster');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   return (
     <div className="p-8 space-y-6 max-w-7xl mx-auto">
@@ -201,19 +219,19 @@ export const ClustersView: React.FC<ClustersViewProps> = ({
                       <div className="flex items-center justify-end gap-2">
                         <button
                           onClick={() => onSelectCluster(cluster.id)}
-                          className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded text-xs transition-colors"
+                          className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded text-xs transition-colors cursor-pointer"
                         >
                           Inspect →
                         </button>
                         {canDeleteClusters && (
                           <button
-                            onClick={() => {
-                              if (confirm(`Are you sure you want to delete cluster ${cluster.name}?`)) {
-                                onDeleteCluster(cluster.id);
-                              }
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setClusterToDelete(cluster);
+                              setDeleteError(null);
                             }}
                             title="Delete Cluster"
-                            className="p-1.5 text-zinc-500 hover:text-rose-400 hover:bg-rose-950/40 rounded transition-colors"
+                            className="p-1.5 text-zinc-500 hover:text-rose-400 hover:bg-rose-950/40 rounded transition-colors cursor-pointer"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -227,6 +245,60 @@ export const ClustersView: React.FC<ClustersViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Delete Cluster Confirmation Modal */}
+      <Modal
+        isOpen={!!clusterToDelete}
+        onClose={() => {
+          if (!isDeleting) {
+            setClusterToDelete(null);
+            setDeleteError(null);
+          }
+        }}
+        title="Delete Kubernetes Cluster"
+        maxWidth="md"
+      >
+        <div className="space-y-4">
+          <div className="flex items-start gap-3 p-3.5 bg-rose-950/20 border border-rose-900/30 rounded-lg text-rose-300">
+            <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+            <div className="text-xs space-y-1">
+              <p className="font-semibold text-rose-200">Are you sure you want to delete this cluster?</p>
+              <p className="text-zinc-400">
+                Deleting <span className="font-mono text-zinc-200 font-bold">{clusterToDelete?.name}</span> ({clusterToDelete?.id}) will permanently remove all associated agent tokens, telemetry snapshots, and resource records from SkyOps.
+              </p>
+            </div>
+          </div>
+
+          {deleteError && (
+            <div className="p-3 bg-rose-950/40 border border-rose-800/50 rounded text-xs text-rose-300">
+              {deleteError}
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-2.5 pt-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={isDeleting}
+              onClick={() => {
+                setClusterToDelete(null);
+                setDeleteError(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              disabled={isDeleting}
+              onClick={handleDeleteConfirm}
+              icon={isDeleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+            >
+              {isDeleting ? 'Deleting Cluster...' : 'Delete Cluster'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 };

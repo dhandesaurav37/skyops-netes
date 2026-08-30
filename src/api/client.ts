@@ -227,6 +227,19 @@ class ApiClient {
     return data.note;
   }
 
+  async deleteIncident(id: string): Promise<void> {
+    await this.request<{ status: string; id: string }>(`/api/v1/incidents/${id}`, {
+      method: 'DELETE'
+    });
+  }
+
+  async clearAllIncidents(): Promise<number> {
+    const data = await this.request<{ status: string; count: number }>(`/api/v1/incidents`, {
+      method: 'DELETE'
+    });
+    return data.count;
+  }
+
   // --- Overview ---
   async getOverview(): Promise<{
     metrics: OverviewMetrics;

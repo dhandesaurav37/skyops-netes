@@ -48,8 +48,13 @@ export const AppShell: React.FC<AppShellProps> = ({
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [recentActivity, setRecentActivity] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const fetchGlobalData = async () => {
+  const fetchGlobalData = async (isManual = false) => {
+    if (isManual) {
+      setIsRefreshing(true);
+    }
+    const startTime = Date.now();
     try {
       const [overviewData, incidentsData] = await Promise.all([
         api.getOverview().catch((err) => {
@@ -79,14 +84,23 @@ export const AppShell: React.FC<AppShellProps> = ({
         setMetrics(defaultMetrics);
       }
     } finally {
+      const elapsed = Date.now() - startTime;
+      if (isManual && elapsed < 400) {
+        await new Promise((r) => setTimeout(r, 400 - elapsed));
+      }
       setLoading(false);
+      setIsRefreshing(false);
     }
+  };
+
+  const handleManualRefresh = () => {
+    fetchGlobalData(true);
   };
 
   useEffect(() => {
     fetchGlobalData();
-    // 15-second background polling for live agent pulses and incidents
-    const interval = setInterval(fetchGlobalData, 15000);
+    // 10-second background polling for live agent pulses and incidents
+    const interval = setInterval(() => fetchGlobalData(false), 10000);
     return () => clearInterval(interval);
   }, [currentOrg?.id]);
 
@@ -161,8 +175,8 @@ export const AppShell: React.FC<AppShellProps> = ({
               onSelectIncident={handleSelectIncident}
               onSelectCluster={handleSelectCluster}
               onOpenAddCluster={() => setIsAddClusterOpen(true)}
-              onRefresh={fetchGlobalData}
-              loading={loading}
+              onRefresh={handleManualRefresh}
+              loading={loading || isRefreshing}
             />
           )}
 
@@ -173,6 +187,11 @@ export const AppShell: React.FC<AppShellProps> = ({
                   clusterId={selectedClusterId}
                   onBack={() => setSelectedClusterId(null)}
                   onSelectIncident={handleSelectIncident}
+                  onDeleteCluster={async (id) => {
+                    await api.deleteCluster(id);
+                    setSelectedClusterId(null);
+                    fetchGlobalData(true);
+                  }}
                 />
               ) : (
                 <ClustersView
@@ -181,10 +200,10 @@ export const AppShell: React.FC<AppShellProps> = ({
                   onOpenAddCluster={() => setIsAddClusterOpen(true)}
                   onDeleteCluster={async (id) => {
                     await api.deleteCluster(id);
-                    fetchGlobalData();
+                    fetchGlobalData(true);
                   }}
-                  onRefresh={fetchGlobalData}
-                  loading={loading}
+                  onRefresh={handleManualRefresh}
+                  loading={loading || isRefreshing}
                 />
               )}
             </>
@@ -203,8 +222,8 @@ export const AppShell: React.FC<AppShellProps> = ({
                   incidents={incidents}
                   clusters={clusters}
                   onSelectIncident={handleSelectIncident}
-                  onRefresh={fetchGlobalData}
-                  loading={loading}
+                  onRefresh={handleManualRefresh}
+                  loading={loading || isRefreshing}
                 />
               )}
             </>
@@ -214,7 +233,7 @@ export const AppShell: React.FC<AppShellProps> = ({
             <SettingsView
               clusters={clusters}
               onSelectIncident={handleSelectIncident}
-              onRefresh={fetchGlobalData}
+              onRefresh={handleManualRefresh}
             />
           )}
         </div>

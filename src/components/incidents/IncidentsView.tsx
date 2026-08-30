@@ -7,9 +7,12 @@ import {
   RefreshCw,
   Search,
   SlidersHorizontal,
+  Trash2,
   X
 } from 'lucide-react';
 import React, { useState } from 'react';
+import { api } from '../../api/client';
+import { useAuth } from '../../context/AuthContext';
 import { Cluster, Incident, IncidentSeverity, IncidentStatus } from '../../types/index';
 import { SeverityBadge, StatusBadge } from '../common/Badges';
 import { Button, EmptyState } from '../common/UI';
@@ -29,10 +32,25 @@ export const IncidentsView: React.FC<IncidentsViewProps> = ({
   onRefresh,
   loading
 }) => {
+  const { canEditIncidents } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [severityFilter, setSeverityFilter] = useState<string>('ALL');
   const [clusterFilter, setClusterFilter] = useState<string>('ALL');
+  const [clearing, setClearing] = useState(false);
+
+  const handleClearAll = async () => {
+    if (!window.confirm('Are you sure you want to clear all incident tickets? Any active failing resources will regenerate tickets on the next telemetry sync.')) return;
+    try {
+      setClearing(true);
+      await api.clearAllIncidents();
+      onRefresh();
+    } catch (err) {
+      console.error('Failed to clear incidents:', err);
+    } finally {
+      setClearing(false);
+    }
+  };
 
   const formatTimeAgo = (ts?: number) => {
     if (!ts) return 'Never';
@@ -91,15 +109,29 @@ export const IncidentsView: React.FC<IncidentsViewProps> = ({
             Deduplicated Kubernetes failure states, occurrence counters, and investigation timelines
           </p>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={onRefresh}
-          disabled={loading}
-          icon={<RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />}
-        >
-          Refresh Incidents
-        </Button>
+        <div className="flex items-center gap-2">
+          {canEditIncidents && incidents.length > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleClearAll}
+              disabled={loading || clearing}
+              icon={<Trash2 className="w-3.5 h-3.5 text-zinc-400" />}
+              className="text-zinc-400 hover:text-rose-400 hover:border-rose-900"
+            >
+              Clear All
+            </Button>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onRefresh}
+            disabled={loading}
+            icon={<RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />}
+          >
+            Refresh Incidents
+          </Button>
+        </div>
       </div>
 
       {/* Filter / Search Bar */}

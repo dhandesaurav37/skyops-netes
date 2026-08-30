@@ -592,7 +592,65 @@ class DataStore {
       this.evaluateResourceObservation(cluster.orgId, clusterId, cluster.name, res);
     }
 
+    // Auto-clean any false positive Deployment/DaemonSet/Pod incidents where the resource is currently healthy
+    for (const inc of this.incidents.values()) {
+      if (inc.clusterId === clusterId && (inc.status === 'OPEN' || inc.status === 'IN_PROGRESS' || inc.status === 'ACKNOWLEDGED')) {
+        const matchingResource = incomingResources.find(
+          (r) =>
+            r.kind.toLowerCase() === inc.resourceKind.toLowerCase() &&
+            (r.namespace || 'default').toLowerCase() === inc.namespace.toLowerCase() &&
+            r.name.toLowerCase() === inc.resourceName.toLowerCase()
+        );
+
+        if (matchingResource) {
+          const recovery = IncidentDetector.evaluateRecovery(matchingResource, inc.incidentType);
+          if (recovery.recovered) {
+            inc.status = 'RESOLVED';
+            inc.resolvedAt = Date.now();
+            inc.updatedAt = Date.now();
+            this.addTimelineEvent(inc.id, {
+              type: 'RECOVERY',
+              actor: { type: 'AGENT', name: 'SkyOps Telemetry Engine' },
+              description: `Auto-resolved: ${recovery.reason}`
+            });
+          }
+        }
+      }
+    }
+
+    this.updateClusterIncidentCount(clusterId);
     this.saveSnapshot();
+  }
+
+  public deleteIncident(incidentId: string, orgId: string): boolean {
+    const inc = this.incidents.get(incidentId);
+    if (!inc || inc.orgId !== orgId) return false;
+
+    this.incidents.delete(incidentId);
+    this.incidentTimeline.delete(incidentId);
+    this.incidentNotes.delete(incidentId);
+    this.updateClusterIncidentCount(inc.clusterId);
+    this.saveSnapshot();
+    return true;
+  }
+
+  public clearAllIncidents(orgId: string): number {
+    let count = 0;
+    for (const [id, inc] of Array.from(this.incidents.entries())) {
+      if (inc.orgId === orgId) {
+        this.incidents.delete(id);
+        this.incidentTimeline.delete(id);
+        this.incidentNotes.delete(id);
+        count++;
+      }
+    }
+    for (const cluster of this.clusters.values()) {
+      if (cluster.orgId === orgId) {
+        this.updateClusterIncidentCount(cluster.id);
+      }
+    }
+    this.saveSnapshot();
+    return count;
   }
 
   public getClusterResources(clusterId: string, orgId: string): KubernetesResource[] {
