@@ -18,7 +18,7 @@ rules:
       - persistentvolumes
       - configmaps
       - events
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list", "watch", "create", "delete"]
   - apiGroups: ["apps"]
     resources:
       - deployments

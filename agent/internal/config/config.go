@@ -11,15 +11,16 @@ import (
 
 // Config holds runtime configuration for the SkyOps Kubernetes Agent
 type Config struct {
-	ClusterID         string
-	AgentToken        string
-	ServerURL         string
-	AgentVersion      string
-	HeartbeatInterval time.Duration
-	TelemetryInterval time.Duration
-	QueueCapacity     int
-	MaxRetries        int
-	BackoffBase       time.Duration
+	ClusterID          string
+	AgentToken         string
+	ServerURL          string
+	AgentVersion       string
+	HeartbeatInterval  time.Duration
+	TelemetryInterval  time.Duration
+	QueueCapacity      int
+	MaxRetries         int
+	BackoffBase        time.Duration
+	ActionPollInterval time.Duration
 }
 
 // LoadFromEnv loads configuration from environment variables with defaults
@@ -56,7 +57,7 @@ func LoadFromEnv() (*Config, error) {
 		AgentToken:        agentToken,
 		ServerURL:         serverURL,
 		AgentVersion:      agentVersion,
-		HeartbeatInterval: heartbeatInterval, TelemetryInterval: telemetryInterval,
+		HeartbeatInterval: heartbeatInterval, TelemetryInterval: telemetryInterval, ActionPollInterval: durationEnv("SKYOPS_ACTION_POLL_INTERVAL", 5*time.Second),
 		QueueCapacity: positiveIntEnv("SKYOPS_QUEUE_CAPACITY", 500), MaxRetries: positiveIntEnv("SKYOPS_MAX_RETRIES", 5), BackoffBase: durationEnv("SKYOPS_BACKOFF_BASE", time.Second),
 	}, nil
 }

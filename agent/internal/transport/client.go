@@ -88,6 +88,18 @@ type HeartbeatPayload struct {
 	Timestamp    int64  `json:"timestamp"`
 }
 
+// RemediationAction is deliberately narrow: agents reject every action type other
+// than a reviewed pod image replacement.
+type RemediationAction struct {
+	ID                   string                                            `json:"id"`
+	IncidentID           string                                            `json:"incidentId"`
+	Type                 string                                            `json:"type"`
+	Target               struct{ Kind, Namespace, Name, Container string } `json:"target"`
+	FieldPath            string                                            `json:"fieldPath"`
+	ExpectedCurrentValue string                                            `json:"expectedCurrentValue"`
+	ProposedValue        string                                            `json:"proposedValue"`
+}
+
 // SendHeartbeat sends a periodic heartbeat with exponential retry backoff
 func (c *Client) SendHeartbeat(ctx context.Context, payload HeartbeatPayload) error {
 	url := fmt.Sprintf("%s/api/v1/agent/heartbeat", c.cfg.ServerURL)
@@ -98,6 +110,34 @@ func (c *Client) SendHeartbeat(ctx context.Context, payload HeartbeatPayload) er
 func (c *Client) SendTelemetry(ctx context.Context, payload interface{}) error {
 	url := fmt.Sprintf("%s/api/v1/agent/telemetry", c.cfg.ServerURL)
 	return c.postWithRetry(ctx, url, payload)
+}
+
+func (c *Client) PollActions(ctx context.Context) ([]RemediationAction, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/api/v1/agent/actions", c.cfg.ServerURL), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.cfg.AgentToken))
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("action poll returned HTTP %d: %s", resp.StatusCode, body)
+	}
+	var body struct {
+		Actions []RemediationAction `json:"actions"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, err
+	}
+	return body.Actions, nil
+}
+
+func (c *Client) ReportActionResult(ctx context.Context, actionID string, success bool, message string) error {
+	return c.postWithRetry(ctx, fmt.Sprintf("%s/api/v1/agent/actions/%s/result", c.cfg.ServerURL, actionID), map[string]interface{}{"success": success, "message": message})
 }
 
 func (c *Client) postWithRetry(ctx context.Context, url string, payload interface{}) error {

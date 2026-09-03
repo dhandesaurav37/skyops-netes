@@ -730,6 +730,33 @@ app.post('/api/v1/agent/telemetry', requireAgentAuth, (req: AuthenticatedAgentRe
   });
 });
 
+const ApproveImageReplacementSchema = z.object({
+  container: z.string().min(1).max(253),
+  expectedCurrentValue: z.string().min(1).max(1024),
+  proposedValue: z.string().min(1).max(1024)
+});
+
+// Approval intentionally requires an authenticated engineer/admin/owner. It never mutates Kubernetes from the backend.
+app.post('/api/v1/incidents/:id/remediations/replace-pod-image/approve', requireUserAuth, requireOrgMembership, requireRole(['OWNER', 'ADMIN', 'ENGINEER']), (req: AuthenticatedUserRequest, res) => {
+  const parsed = ApproveImageReplacementSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid remediation approval' });
+  try { res.status(201).json({ action: store.approvePodImageReplacement(req.params.id, req.orgId!, parsed.data, { id: req.user!.id, name: req.user!.name }) }); }
+  catch (err: any) { res.status(400).json({ error: err?.message || 'Unable to approve remediation' }); }
+});
+
+app.get('/api/v1/agent/actions', requireAgentAuth, (req: AuthenticatedAgentRequest, res) => {
+  res.json({ actions: store.claimPendingRemediationActions(req.clusterId!) });
+});
+
+const ActionResultSchema = z.object({ actionId: z.string().min(1), success: z.boolean(), message: z.string().min(1).max(4096) });
+app.post('/api/v1/agent/actions/:id/result', requireAgentAuth, (req: AuthenticatedAgentRequest, res) => {
+  const parsed = ActionResultSchema.safeParse({ ...req.body, actionId: req.params.id });
+  if (!parsed.success) return res.status(400).json({ error: 'Invalid action result' });
+  const action = store.recordRemediationResult(req.clusterId!, parsed.data.actionId, parsed.data);
+  if (!action) return res.status(404).json({ error: 'Action not found or is not deliverable' });
+  res.json({ action });
+});
+
 // --- Incidents Management ---
 app.get('/api/v1/incidents', requireUserAuth, requireOrgMembership, (req: AuthenticatedUserRequest, res) => {
   const { status, severity, clusterId, namespace, search } = req.query;
