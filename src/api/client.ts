@@ -11,6 +11,8 @@ import {
   OrgMember,
   OverviewMetrics,
   Role,
+  SkyOpsAIAnalysis,
+  StructuredRemediation,
   TimelineEvent,
   User
 } from '../types/index';
@@ -199,8 +201,61 @@ class ApiClient {
     return data.incidents;
   }
 
-  async getIncident(id: string): Promise<{ incident: Incident; timeline: TimelineEvent[]; notes: IncidentNote[] }> {
-    return this.request<{ incident: Incident; timeline: TimelineEvent[]; notes: IncidentNote[] }>(`/api/v1/incidents/${id}`);
+  async getIncident(id: string): Promise<{
+    incident: Incident;
+    timeline: TimelineEvent[];
+    notes: IncidentNote[];
+    aiAnalysis?: SkyOpsAIAnalysis | null;
+    remediation?: StructuredRemediation | null;
+  }> {
+    return this.request<{
+      incident: Incident;
+      timeline: TimelineEvent[];
+      notes: IncidentNote[];
+      aiAnalysis?: SkyOpsAIAnalysis | null;
+      remediation?: StructuredRemediation | null;
+    }>(`/api/v1/incidents/${id}`);
+  }
+
+  async getIncidentAIAnalysis(id: string): Promise<{ analysis: SkyOpsAIAnalysis; remediation?: StructuredRemediation }> {
+    return this.request<{ analysis: SkyOpsAIAnalysis; remediation?: StructuredRemediation }>(`/api/v1/incidents/${id}/ai-analysis`);
+  }
+
+  async triggerIncidentAIAnalysis(id: string, force = false): Promise<{ analysis: SkyOpsAIAnalysis; remediation?: StructuredRemediation }> {
+    return this.request<{ analysis: SkyOpsAIAnalysis; remediation?: StructuredRemediation }>(`/api/v1/incidents/${id}/ai-analysis`, {
+      method: 'POST',
+      body: JSON.stringify({ force })
+    });
+  }
+
+  async getIncidentRemediation(id: string): Promise<{ remediation: StructuredRemediation }> {
+    return this.request<{ remediation: StructuredRemediation }>(`/api/v1/incidents/${id}/remediation`);
+  }
+
+  async approveRemediation(
+    id: string,
+    options?: { proposedImage?: string; comments?: string }
+  ): Promise<{ success: boolean; message: string; remediation: StructuredRemediation }> {
+    return this.request<{ success: boolean; message: string; remediation: StructuredRemediation }>(
+      `/api/v1/incidents/${id}/remediation/approve`,
+      {
+        method: 'POST',
+        body: JSON.stringify(options || {})
+      }
+    );
+  }
+
+  async rejectRemediation(
+    id: string,
+    reason?: string
+  ): Promise<{ success: boolean; message: string; remediation: StructuredRemediation }> {
+    return this.request<{ success: boolean; message: string; remediation: StructuredRemediation }>(
+      `/api/v1/incidents/${id}/remediation/reject`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ reason })
+      }
+    );
   }
 
   async updateIncident(

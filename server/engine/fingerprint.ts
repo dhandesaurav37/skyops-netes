@@ -14,13 +14,13 @@ export function generateIncidentFingerprint(
   rootCauseCategory = ''
 ): string {
   const normalizedKey = [
-    clusterId.trim(),
-    namespace.trim().toLowerCase(),
-    resourceKind.trim().toLowerCase(),
-    resourceName.trim().toLowerCase(),
-    incidentType.trim(),
-    containerName.trim().toLowerCase(),
-    rootCauseCategory.trim()
+    String(clusterId || '').trim(),
+    String(namespace || '').trim().toLowerCase(),
+    String(resourceKind || '').trim().toLowerCase(),
+    String(resourceName || '').trim().toLowerCase(),
+    String(incidentType || '').trim(),
+    String(containerName || '').trim().toLowerCase(),
+    String(rootCauseCategory || '').trim()
   ].join(':');
 
   return crypto.createHash('sha256').update(normalizedKey).digest('hex');

@@ -11,6 +11,7 @@ import (
 
 	"github.com/skyops-io/skyops/agent/internal/collector"
 	"github.com/skyops-io/skyops/agent/internal/config"
+	"github.com/skyops-io/skyops/agent/internal/executor"
 	"github.com/skyops-io/skyops/agent/internal/heartbeat"
 	"github.com/skyops-io/skyops/agent/internal/queue"
 	"github.com/skyops-io/skyops/agent/internal/transport"
@@ -113,12 +114,14 @@ func main() {
 	resourceCollector := collector.NewCollector(cfg, transportClient, telemetryQueue, kClient)
 	resourceCollector.SetStateUpdater(heartbeatService)
 
+	remediationExecutor := executor.NewExecutor(cfg, transportClient, kClient)
+
 	// Start background routines
 	go heartbeatService.Start(ctx)
 	go resourceCollector.Start(ctx)
+	go remediationExecutor.Start(ctx)
 
-
-	slog.Info("SkyOps Agent running in active observation mode")
+	slog.Info("SkyOps Agent running in active observation and remediation mode")
 
 	// Wait for shutdown signal
 	<-ctx.Done()

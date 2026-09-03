@@ -81,42 +81,6 @@
       "k8sVersion": "v1.31.2",
       "connectionStatus": "connected"
     },
-    "cls-c42f847451de": {
-      "id": "cls-c42f847451de",
-      "orgId": "org-85197e5f1bd6",
-      "name": "sky-cluster",
-      "description": "",
-      "status": "pending",
-      "agentStatus": "PENDING",
-      "connectionState": "pending",
-      "connectionCode": "SKYOPS-5URQ-DM4H",
-      "connectionCodeExpiresAt": 1787590955735,
-      "installKey": "sky_inst_516f74e48b06deb4ed093c3a5224d26a84da9920",
-      "installKeyExpiresAt": 1787593655735,
-      "nodeCount": 0,
-      "podCount": 0,
-      "openIncidentCount": 0,
-      "createdAt": 1787590055735,
-      "agentToken": "sky_agent_d14f40d516b078f5812923012fe0c3296261aa2c5c6c4d01"
-    },
-    "cls-036f5c494676": {
-      "id": "cls-036f5c494676",
-      "orgId": "org-85197e5f1bd6",
-      "name": "killer-cluster",
-      "description": "Environment: Production",
-      "status": "pending",
-      "agentStatus": "PENDING",
-      "connectionState": "pending",
-      "connectionCode": "DMLC-EN3W",
-      "connectionCodeExpiresAt": 1787592594795,
-      "installKey": "sky_inst_c9922ef4621eddd13d633311e503dfdeab9f7ed5",
-      "installKeyExpiresAt": 1787595294795,
-      "nodeCount": 0,
-      "podCount": 0,
-      "openIncidentCount": 0,
-      "createdAt": 1787591694795,
-      "agentToken": "sky_agent_35bc64d889981a2fb587bc9de2065bdc43df38aa4652f0ea"
-    },
     "cls-a1a745aadec4": {
       "id": "cls-a1a745aadec4",
       "orgId": "org-0890c5036a3e",
@@ -187,24 +151,6 @@
       "createdAt": 1787592511765,
       "agentToken": "sky_agent_56c4ad511fb97c77b6db4e1aaa6a91f3bf9c31ebcc932478"
     },
-    "cls-4ce416345369": {
-      "id": "cls-4ce416345369",
-      "orgId": "org-85197e5f1bd6",
-      "name": "ggg",
-      "description": "Environment: Production",
-      "status": "pending",
-      "agentStatus": "PENDING",
-      "connectionState": "pending",
-      "connectionCode": "SKYOPS-L55M-DK9D",
-      "connectionCodeExpiresAt": 1787593528055,
-      "installKey": "sky_inst_68c7fa1ebc6200dadceffd27b62966bf6feeb7a9",
-      "installKeyExpiresAt": 1787596228055,
-      "nodeCount": 0,
-      "podCount": 0,
-      "openIncidentCount": 0,
-      "createdAt": 1787592628055,
-      "agentToken": "sky_agent_5fbbbc65065af879b9068aef26f4539e538a8ed0db633a28"
-    },
     "cls-96d308f392fe": {
       "id": "cls-96d308f392fe",
       "orgId": "org-0890c5036a3e",
@@ -231,37 +177,65 @@
       "k8sVersion": "v1.32.1",
       "connectionStatus": "connected"
     },
-    "cls-8912f8ad5aab": {
-      "id": "cls-8912f8ad5aab",
+    "cls-ea233f047272": {
+      "id": "cls-ea233f047272",
       "orgId": "org-85197e5f1bd6",
-      "name": "hhh",
+      "name": "line",
       "description": "Environment: Production",
       "status": "pending",
       "agentStatus": "PENDING",
       "connectionState": "pending",
-      "connectionCode": "SKYOPS-S54L-YY6K",
-      "connectionCodeExpiresAt": 1787597019684,
-      "installKey": "sky_inst_c20ba56a7afba44207835499c0cdfdb219773406",
-      "installKeyExpiresAt": 1787599719684,
+      "connectionCode": "SKYOPS-CHU7-6AD3",
+      "connectionCodeExpiresAt": 1788326201097,
+      "installKey": "sky_inst_e8fc3a022198f18ac3592454668d739603ec2a4b",
+      "installKeyExpiresAt": 1788328901097,
       "nodeCount": 0,
       "podCount": 0,
       "openIncidentCount": 0,
-      "createdAt": 1787596119684,
-      "agentToken": "sky_agent_c314764b9bfdffa347a3bfef4b06d793fea4d535578d1936"
+      "createdAt": 1788325301097,
+      "agentToken": "sky_agent_caf71028a5b9292d805034127449527eaf7f5f543309a1c0"
+    },
+    "cls-603f23ba3c5a": {
+      "id": "cls-603f23ba3c5a",
+      "orgId": "org-85197e5f1bd6",
+      "name": "kli",
+      "description": "Environment: Production",
+      "status": "pending",
+      "agentStatus": "PENDING",
+      "connectionState": "pending",
+      "connectionCode": "SKYOPS-L7LA-7PSA",
+      "connectionCodeExpiresAt": 1788337039538,
+      "installKey": "sky_inst_9f2bb65156cadb74a1b94804c83df54107519908",
+      "installKeyExpiresAt": 1788339739538,
+      "nodeCount": 0,
+      "podCount": 0,
+      "openIncidentCount": 0,
+      "createdAt": 1788336139538,
+      "agentToken": "sky_agent_65b5bac4d23f158fdd21cde9171f14d284d730cffb807a82"
+    },
+    "cls-91a80cb2a4a5": {
+      "id": "cls-91a80cb2a4a5",
+      "orgId": "org-85197e5f1bd6",
+      "name": "ooo",
+      "description": "Environment: Production",
+      "status": "pending",
+      "agentStatus": "PENDING",
+      "connectionState": "pending",
+      "connectionCode": "SKYOPS-LFLX-QL32",
+      "connectionCodeExpiresAt": 1788337546135,
+      "installKey": "sky_inst_af7914b3326cf8fe681496701e6dec0906aa416d",
+      "installKeyExpiresAt": 1788340246135,
+      "nodeCount": 0,
+      "podCount": 0,
+      "openIncidentCount": 0,
+      "createdAt": 1788336646135,
+      "agentToken": "sky_agent_4e3ed048247fa4b3d958f1b0bc7bfabc4ac5299a5e5c4485"
     }
   },
   "clusterTokens": {
     "9183898f1fb9fcb92e02f62ca0ceaf4bb60ac2e80a4c378ec97452b42b8c6909": {
       "clusterId": "cls-5a6532fb1d5f",
       "orgId": "org-0890c5036a3e"
-    },
-    "a79e34c69cb2bfb29c80b9b143dcd6ee2bde8efb744d9310fc290aa5b26ccafc": {
-      "clusterId": "cls-c42f847451de",
-      "orgId": "org-85197e5f1bd6"
-    },
-    "1ab1d3a3c59de66ee5d83b9eda566a065afbf2572ca90875141c3d29c8635d41": {
-      "clusterId": "cls-036f5c494676",
-      "orgId": "org-85197e5f1bd6"
     },
     "457f06f9745e4088d3ee73d96a5dfcfa658bce6e7465c88e4a78a538912bb132": {
       "clusterId": "cls-a1a745aadec4",
@@ -275,16 +249,20 @@
       "clusterId": "cls-31a850b02e33",
       "orgId": "org-0890c5036a3e"
     },
-    "ca16c2989ee6f9439bac3cdd7d3e71d1b81b714b67df925246ac26823071534d": {
-      "clusterId": "cls-4ce416345369",
-      "orgId": "org-85197e5f1bd6"
-    },
     "7455de55abd037d7dd3820fbed6d8ec0d6e062ba1614b97e0a1148e88b495094": {
       "clusterId": "cls-96d308f392fe",
       "orgId": "org-0890c5036a3e"
     },
-    "308822594f92633be7eed8ebe213baa20e4d51324e716901bc4065c404dba399": {
-      "clusterId": "cls-8912f8ad5aab",
+    "0bede5ab77a1db205b882c653aa0caa931a1313eef2d573d3a1f5b7dd9e35c7a": {
+      "clusterId": "cls-ea233f047272",
+      "orgId": "org-85197e5f1bd6"
+    },
+    "c4a687c6cd2507c655a18aa078e4a227a3d9c7a704fd1bdac6fbc1606a7bd2c9": {
+      "clusterId": "cls-603f23ba3c5a",
+      "orgId": "org-85197e5f1bd6"
+    },
+    "f237ca582660dfde87fdaf9523d4f2991c1992fe245d20c6057c170d5d39ce7f": {
+      "clusterId": "cls-91a80cb2a4a5",
       "orgId": "org-85197e5f1bd6"
     }
   },
@@ -317,12 +295,9 @@
         "createdAt": 1787585000000
       }
     ],
-    "cls-c42f847451de": [],
-    "cls-036f5c494676": [],
     "cls-a1a745aadec4": [],
     "cls-71d4484f17c8": [],
     "cls-31a850b02e33": [],
-    "cls-4ce416345369": [],
     "cls-96d308f392fe": [
       {
         "kind": "Node",
@@ -408,10 +383,14 @@
         }
       }
     ],
-    "cls-8912f8ad5aab": []
+    "cls-ea233f047272": [],
+    "cls-603f23ba3c5a": [],
+    "cls-91a80cb2a4a5": []
   },
   "incidents": {},
   "incidentTimeline": {},
   "incidentNotes": {},
+  "remediations": {},
+  "aiAnalyses": {},
   "incidentCounter": 1001
 }

@@ -100,6 +100,71 @@ func (c *Client) SendTelemetry(ctx context.Context, payload interface{}) error {
 	return c.postWithRetry(ctx, url, payload)
 }
 
+// AgentAction represents an approved, structured remediation command from SkyOps platform
+type AgentAction struct {
+	ID             string `json:"id"`
+	IncidentID     string `json:"incidentId"`
+	ActionType     string `json:"actionType"`
+	TargetResource struct {
+		Kind      string `json:"kind"`
+		Namespace string `json:"namespace"`
+		Name      string `json:"name"`
+	} `json:"targetResource"`
+	Parameters struct {
+		ContainerName string `json:"containerName"`
+		CurrentImage  string `json:"currentImage"`
+		ProposedImage string `json:"proposedImage"`
+	} `json:"parameters"`
+	Status string `json:"status"`
+}
+
+type PendingActionsResponse struct {
+	Status    string        `json:"status"`
+	ClusterID string        `json:"clusterId"`
+	Actions   []AgentAction `json:"actions"`
+}
+
+type ActionResultPayload struct {
+	Status         string                 `json:"status"`
+	Message        string                 `json:"message,omitempty"`
+	AppliedChanges map[string]interface{} `json:"appliedChanges,omitempty"`
+	AgentVersion   string                 `json:"agentVersion,omitempty"`
+}
+
+// FetchPendingActions queries the SkyOps server for approved remediation commands
+func (c *Client) FetchPendingActions(ctx context.Context) ([]AgentAction, error) {
+	url := fmt.Sprintf("%s/api/v1/agent/actions", c.cfg.ServerURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.cfg.AgentToken))
+	req.Header.Set("User-Agent", fmt.Sprintf("SkyOpsAgent/%s", c.cfg.AgentVersion))
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("actions API returned HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	var res PendingActionsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return nil, err
+	}
+	return res.Actions, nil
+}
+
+// SendActionResult reports the result of executing an approved remediation back to the server
+func (c *Client) SendActionResult(ctx context.Context, actionID string, payload ActionResultPayload) error {
+	url := fmt.Sprintf("%s/api/v1/agent/actions/%s/result", c.cfg.ServerURL, actionID)
+	return c.postWithRetry(ctx, url, payload)
+}
+
 func (c *Client) postWithRetry(ctx context.Context, url string, payload interface{}) error {
 	bodyBytes, err := json.Marshal(payload)
 	if err != nil {

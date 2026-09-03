@@ -32,11 +32,14 @@ import {
   IncidentNote,
   IncidentSeverity,
   IncidentStatus,
+  SkyOpsAIAnalysis,
+  StructuredRemediation,
   TimelineEvent
 } from '../../types/index';
 import { formatDuration, formatReportDate, generateIncidentPdf, getPriorityLabel } from '../../utils/incidentPdfGenerator';
 import { SeverityBadge, StatusBadge } from '../common/Badges';
 import { Button, CodeBlock, CopyButton, EmptyState, LoadingState } from '../common/UI';
+import { SkyOpsAIAnalysisCard } from './SkyOpsAIAnalysisCard';
 
 interface IncidentDetailViewProps {
   incidentId: string;
@@ -53,6 +56,8 @@ export const IncidentDetailView: React.FC<IncidentDetailViewProps> = ({
   const [incident, setIncident] = useState<Incident | null>(null);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [notes, setNotes] = useState<IncidentNote[]>([]);
+  const [aiAnalysis, setAiAnalysis] = useState<SkyOpsAIAnalysis | null>(null);
+  const [remediation, setRemediation] = useState<StructuredRemediation | null>(null);
   const [loading, setLoading] = useState(true);
   const [newNoteContent, setNewNoteContent] = useState('');
   const [isSubmittingNote, setIsSubmittingNote] = useState(false);
@@ -68,6 +73,12 @@ export const IncidentDetailView: React.FC<IncidentDetailViewProps> = ({
       setIncident(data.incident);
       setTimeline(data.timeline);
       setNotes(data.notes);
+      if (data.aiAnalysis) {
+        setAiAnalysis(data.aiAnalysis);
+      }
+      if (data.remediation) {
+        setRemediation(data.remediation);
+      }
     } catch (err) {
       console.error('Failed to fetch incident details:', err);
     } finally {
@@ -357,6 +368,15 @@ export const IncidentDetailView: React.FC<IncidentDetailViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* --- SKYOPS AI REASONING & REMEDIATION INTELLIGENCE LAYER --- */}
+      <SkyOpsAIAnalysisCard
+        incidentId={incident.id}
+        initialAnalysis={aiAnalysis}
+        initialRemediation={remediation}
+        canEdit={canEditIncidents}
+        onRemediationApplied={fetchIncidentData}
+      />
 
       {/* --- TWO COLUMN SERVICENOW TICKET LAYOUT --- */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
