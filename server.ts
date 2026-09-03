@@ -20,6 +20,7 @@ import {
 } from './server/manifestGenerator';
 import { normalizeTelemetry } from './server/normalization';
 import { store } from './server/store';
+import { skyOpsAIService } from './server/ai/service';
 import { AGENT_DEFAULT_NAMESPACE, AGENT_VERSION } from './src/config/version';
 import { KubernetesResource } from './src/types/index';
 
@@ -730,6 +731,33 @@ app.post('/api/v1/agent/telemetry', requireAgentAuth, (req: AuthenticatedAgentRe
   });
 });
 
+const ApproveImageReplacementSchema = z.object({
+  container: z.string().min(1).max(253),
+  expectedCurrentValue: z.string().min(1).max(1024),
+  proposedValue: z.string().min(1).max(1024)
+});
+
+// Approval intentionally requires an authenticated engineer/admin/owner. It never mutates Kubernetes from the backend.
+app.post('/api/v1/incidents/:id/remediations/replace-pod-image/approve', requireUserAuth, requireOrgMembership, requireRole(['OWNER', 'ADMIN', 'ENGINEER']), (req: AuthenticatedUserRequest, res) => {
+  const parsed = ApproveImageReplacementSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid remediation approval' });
+  try { res.status(201).json({ action: store.approvePodImageReplacement(req.params.id, req.orgId!, parsed.data, { id: req.user!.id, name: req.user!.name }) }); }
+  catch (err: any) { res.status(400).json({ error: err?.message || 'Unable to approve remediation' }); }
+});
+
+app.get('/api/v1/agent/actions', requireAgentAuth, (req: AuthenticatedAgentRequest, res) => {
+  res.json({ actions: store.claimPendingRemediationActions(req.clusterId!) });
+});
+
+const ActionResultSchema = z.object({ actionId: z.string().min(1), success: z.boolean(), message: z.string().min(1).max(4096) });
+app.post('/api/v1/agent/actions/:id/result', requireAgentAuth, (req: AuthenticatedAgentRequest, res) => {
+  const parsed = ActionResultSchema.safeParse({ ...req.body, actionId: req.params.id });
+  if (!parsed.success) return res.status(400).json({ error: 'Invalid action result' });
+  const action = store.recordRemediationResult(req.clusterId!, parsed.data.actionId, parsed.data);
+  if (!action) return res.status(404).json({ error: 'Action not found or is not deliverable' });
+  res.json({ action });
+});
+
 // --- Incidents Management ---
 app.get('/api/v1/incidents', requireUserAuth, requireOrgMembership, (req: AuthenticatedUserRequest, res) => {
   const { status, severity, clusterId, namespace, search } = req.query;
@@ -753,8 +781,186 @@ app.get('/api/v1/incidents/:id', requireUserAuth, requireOrgMembership, (req: Au
 
   const timeline = store.getIncidentTimeline(incident.id, req.orgId!);
   const notes = store.getIncidentNotes(incident.id, req.orgId!);
+  const aiAnalysis = skyOpsAIService.getCachedAnalysis(incident.id) || store.getAIAnalysis(incident.id);
+  const remediation = store.getRemediation(incident.id, req.orgId!);
 
-  res.json({ incident, timeline, notes });
+  res.json({ incident, timeline, notes, aiAnalysis, remediation });
+});
+
+// --- SkyOps AI Incident Root-Cause Analysis Endpoints ---
+app.get('/api/v1/incidents/:id/ai-analysis', requireUserAuth, requireOrgMembership, async (req: AuthenticatedUserRequest, res) => {
+  const incident = store.getIncident(req.params.id, req.orgId!);
+  if (!incident) {
+    return res.status(404).json({ error: 'Incident not found' });
+  }
+
+  try {
+    const clusterResources = store.getClusterResources(incident.clusterId, req.orgId!);
+    const associatedResource = clusterResources.find(
+      (r) =>
+        r.kind.toLowerCase() === incident.resourceKind.toLowerCase() &&
+        r.name.toLowerCase() === incident.resourceName.toLowerCase() &&
+        (r.namespace || 'default').toLowerCase() === (incident.namespace || 'default').toLowerCase()
+    );
+    const notes = store.getIncidentNotes(incident.id, req.orgId!).map((n) => n.content);
+
+    const analysis = await skyOpsAIService.analyzeIncident(incident, associatedResource, { notes });
+    store.saveAIAnalysis(incident.id, analysis);
+    res.json({ analysis, remediation: analysis.structuredRemediation });
+  } catch (err: any) {
+    console.error(`[SkyOps API] AI analysis error for ${req.params.id}:`, err);
+    res.status(500).json({ error: err?.message || 'Failed to complete AI analysis' });
+  }
+});
+
+app.post('/api/v1/incidents/:id/ai-analysis', requireUserAuth, requireOrgMembership, async (req: AuthenticatedUserRequest, res) => {
+  const incident = store.getIncident(req.params.id, req.orgId!);
+  if (!incident) {
+    return res.status(404).json({ error: 'Incident not found' });
+  }
+
+  try {
+    const clusterResources = store.getClusterResources(incident.clusterId, req.orgId!);
+    const associatedResource = clusterResources.find(
+      (r) =>
+        r.kind.toLowerCase() === incident.resourceKind.toLowerCase() &&
+        r.name.toLowerCase() === incident.resourceName.toLowerCase() &&
+        (r.namespace || 'default').toLowerCase() === (incident.namespace || 'default').toLowerCase()
+    );
+    const notes = store.getIncidentNotes(incident.id, req.orgId!).map((n) => n.content);
+    const force = req.body?.force === true;
+
+    const analysis = await skyOpsAIService.analyzeIncident(incident, associatedResource, { force, notes });
+    store.saveAIAnalysis(incident.id, analysis);
+    res.json({ analysis, remediation: analysis.structuredRemediation });
+  } catch (err: any) {
+    console.error(`[SkyOps API] Force AI analysis error for ${req.params.id}:`, err);
+    res.status(500).json({ error: err?.message || 'Failed to trigger AI analysis' });
+  }
+});
+
+// --- Controlled AI Remediation Endpoints ---
+app.get('/api/v1/incidents/:id/remediation', requireUserAuth, requireOrgMembership, (req: AuthenticatedUserRequest, res) => {
+  const incident = store.getIncident(req.params.id, req.orgId!);
+  if (!incident) {
+    return res.status(404).json({ error: 'Incident not found' });
+  }
+
+  const remediation = store.getRemediation(req.params.id, req.orgId!);
+  if (!remediation) {
+    return res.status(404).json({ error: 'No remediation proposal found for this incident' });
+  }
+
+  res.json({ remediation });
+});
+
+const ApproveRemediationSchema = z.object({
+  proposedImage: z.string().min(1).max(300).optional(),
+  comments: z.string().max(1000).optional()
+});
+
+app.post(
+  '/api/v1/incidents/:id/remediation/approve',
+  requireUserAuth,
+  requireOrgMembership,
+  requireRole(['OWNER', 'ADMIN', 'ENGINEER']),
+  (req: AuthenticatedUserRequest, res) => {
+    const parsed = ApproveRemediationSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid approval payload' });
+    }
+
+    try {
+      const remediation = store.approveRemediation(
+        req.params.id,
+        req.orgId!,
+        { id: req.user!.id, name: req.user!.name, email: req.user!.email },
+        parsed.data
+      );
+
+      res.json({
+        success: true,
+        message: `Remediation approved and dispatched for execution on cluster ${remediation.clusterName}`,
+        remediation
+      });
+    } catch (err: any) {
+      console.error(`[SkyOps API] Remediation approval error for ${req.params.id}:`, err);
+      res.status(400).json({ error: err?.message || 'Failed to approve remediation' });
+    }
+  }
+);
+
+const RejectRemediationSchema = z.object({
+  reason: z.string().max(500).optional()
+});
+
+app.post(
+  '/api/v1/incidents/:id/remediation/reject',
+  requireUserAuth,
+  requireOrgMembership,
+  requireRole(['OWNER', 'ADMIN', 'ENGINEER']),
+  (req: AuthenticatedUserRequest, res) => {
+    const parsed = RejectRemediationSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid rejection payload' });
+    }
+
+    try {
+      const remediation = store.rejectRemediation(
+        req.params.id,
+        req.orgId!,
+        { id: req.user!.id, name: req.user!.name },
+        parsed.data.reason
+      );
+
+      res.json({
+        success: true,
+        message: 'Remediation proposal declined',
+        remediation
+      });
+    } catch (err: any) {
+      console.error(`[SkyOps API] Remediation rejection error for ${req.params.id}:`, err);
+      res.status(400).json({ error: err?.message || 'Failed to reject remediation' });
+    }
+  }
+);
+
+// --- Agent Command Dispatch & Execution Reporting ---
+app.get('/api/v1/agent/actions', requireAgentAuth, (req: AuthenticatedAgentRequest, res) => {
+  const actions = store.getPendingAgentActions(req.clusterId!);
+  res.json({
+    status: 'OK',
+    clusterId: req.clusterId,
+    timestamp: Date.now(),
+    actions
+  });
+});
+
+const AgentActionResultSchema = z.object({
+  status: z.enum(['SUCCESS', 'FAILED']),
+  message: z.string().max(1000).optional(),
+  appliedChanges: z.record(z.string(), z.unknown()).optional(),
+  agentVersion: z.string().optional()
+});
+
+app.post('/api/v1/agent/actions/:actionId/result', requireAgentAuth, (req: AuthenticatedAgentRequest, res) => {
+  const parsed = AgentActionResultSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid action result payload' });
+  }
+
+  try {
+    const remediation = store.recordAgentActionResult(req.clusterId!, req.params.actionId, parsed.data);
+    res.json({
+      status: 'ACK',
+      clusterId: req.clusterId,
+      remediationId: remediation.id,
+      remediationStatus: remediation.status
+    });
+  } catch (err: any) {
+    console.error(`[SkyOps Agent Action Result Error] clusterId=${req.clusterId}:`, err);
+    res.status(400).json({ error: err?.message || 'Failed to record action result' });
+  }
 });
 
 const UpdateIncidentSchema = z.object({

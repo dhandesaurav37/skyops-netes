@@ -193,6 +193,26 @@ export interface Incident {
     email: string;
   };
   updatedAt: number;
+  aiAnalysis?: SkyOpsAIAnalysis;
+}
+
+/** A human-approved, deterministic mutation which an Agent may execute. */
+export interface RemediationAction {
+  id: string;
+  incidentId: string;
+  clusterId: string;
+  type: 'ReplacePodImage';
+  target: { kind: 'Pod'; namespace: string; name: string; container: string };
+  fieldPath: string;
+  expectedCurrentValue: string;
+  proposedValue: string;
+  approvingUserId: string;
+  approvingUserName: string;
+  approvedAt: number;
+  status: 'PENDING' | 'DELIVERED' | 'SUCCEEDED' | 'FAILED';
+  deliveredAt?: number;
+  completedAt?: number;
+  executionResult?: { success: boolean; message: string };
 }
 
 export type TimelineEventType =
@@ -203,7 +223,9 @@ export type TimelineEventType =
   | 'ASSIGNMENT'
   | 'NOTE_ADDED'
   | 'RECOVERY'
-  | 'MANUAL_UPDATE';
+  | 'MANUAL_UPDATE'
+  | 'REMEDIATION_APPROVED'
+  | 'REMEDIATION_EXECUTED';
 
 export interface TimelineEvent {
   id: string;
@@ -290,3 +312,199 @@ export interface AgentManifestsResponse {
   installCommand?: string;
   manifestDownloadUrl?: string;
 }
+
+// ==========================================
+// SkyOps AI Intelligence & Controlled Remediation Layer Types
+// ==========================================
+
+export type AIRiskLevel = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+export type AIAnalysisStatus = 'SUCCESS' | 'UNAVAILABLE' | 'FAILED' | 'CACHED' | 'RATE_LIMITED';
+
+export type AIRemediationActionType =
+  | 'UPDATE_CONTAINER_IMAGE'
+  | 'REVERT_TAG'
+  | 'ROLLOUT_RESTART'
+  | 'RESOURCE_RESIZING'
+  | 'SCALE_REPLICAS'
+  | 'CONFIG_REVISION'
+  | 'MANUAL_INSPECTION'
+  | 'UNSPECIFIED';
+
+export type RemediationStatus =
+  | 'PROPOSED'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'DISPATCHED'
+  | 'EXECUTING'
+  | 'EXECUTED'
+  | 'VERIFYING'
+  | 'VERIFIED_RESOLVED'
+  | 'VERIFICATION_FAILED'
+  | 'FAILED';
+
+export interface RemediationApproval {
+  approvedBy: {
+    userId: string;
+    name: string;
+    email?: string;
+  };
+  approvedAt: number;
+  comments?: string;
+  overrides?: Record<string, unknown>;
+}
+
+export interface RemediationExecution {
+  dispatchedAt?: number;
+  executedAt?: number;
+  agentVersion?: string;
+  status: 'PENDING' | 'SUCCESS' | 'FAILED';
+  message?: string;
+  appliedChanges?: Record<string, unknown>;
+}
+
+export interface RemediationVerification {
+  verifiedAt?: number;
+  status: 'PENDING' | 'VERIFIED_RESOLVED' | 'VERIFICATION_FAILED';
+  observedState?: string;
+  details?: string;
+  checkCount?: number;
+}
+
+export type AIEvidenceCategory = 'OBSERVED_FACT' | 'AI_INFERENCE' | 'PROPOSED_CHANGE';
+
+export interface AIEvidenceItem {
+  source: string;
+  detail: string;
+  category?: AIEvidenceCategory;
+}
+
+export interface AIAffectedResource {
+  kind: string;
+  namespace: string;
+  name: string;
+  uid?: string;
+}
+
+export interface AIChangePreview {
+  resource: string; // e.g. "Deployment", "Pod", "StatefulSet"
+  namespace: string; // e.g. "default", "production"
+  object: string; // e.g. "frontend-checkout", "api-gateway"
+  container?: string; // e.g. "checkout-api", "nginx"
+  field: string; // e.g. "spec.template.spec.containers[0].image"
+  currentValue: string; // e.g. "registry.internal.corp/checkout:v2.4.1-typo"
+  proposedValue: string; // e.g. "registry.internal.corp/checkout:v2.4.0"
+}
+
+export interface AIVerificationCondition {
+  type: string; // e.g. "Ready", "ContainersReady", "PodScheduled"
+  status: string; // e.g. "True"
+  description?: string;
+}
+
+export interface AIVerificationCriteria {
+  expectedState: string; // e.g. "Pod phase Running and all container ready probes passing"
+  conditions: AIVerificationCondition[];
+  observationWindowSeconds?: number; // e.g. 30
+}
+
+export interface AIRemediationAction {
+  type: AIRemediationActionType;
+  targetResource?: AIAffectedResource;
+  parameters?: Record<string, unknown>;
+}
+
+export interface AIRecommendedFix {
+  description: string;
+  reason: string;
+  risk: AIRiskLevel;
+  expectedImpact: string;
+  rollback: string;
+  action?: AIRemediationAction;
+}
+
+export interface AISaferAlternative {
+  description: string;
+  reason: string;
+}
+
+export interface StructuredRemediation {
+  id: string; // e.g. "REM-SKY-0001-1"
+  incidentId: string;
+  orgId: string;
+  clusterId: string;
+  clusterName: string;
+  status: RemediationStatus;
+  actionType: AIRemediationActionType;
+  targetResource: AIAffectedResource;
+  parameters: {
+    containerName: string;
+    currentImage: string;
+    proposedImage: string;
+    [key: string]: unknown;
+  };
+  changePreview?: AIChangePreview;
+  verificationCriteria?: AIVerificationCriteria;
+  reasoning: {
+    summary: string;
+    rootCause: string;
+    whyRecommended: string;
+    risk: AIRiskLevel;
+    riskExplanation?: string;
+    expectedImpact: string;
+    rollbackStrategy: string;
+    saferAlternative?: string;
+    confidence: number;
+    confidenceExplanation?: string;
+  };
+  approval?: RemediationApproval;
+  execution?: RemediationExecution;
+  verification?: RemediationVerification;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface AITimingMetrics {
+  requestReceivedAt: number;
+  contextConstructedAt: number;
+  geminiRequestStartedAt?: number;
+  geminiResponseReceivedAt?: number;
+  structuredParsedAt?: number;
+  safetyValidatedAt?: number;
+  responseReturnedAt: number;
+  durations: {
+    contextConstructionMs: number;
+    geminiCallMs?: number;
+    parsingMs?: number;
+    safetyValidationMs: number;
+    totalMs: number;
+  };
+}
+
+export interface SkyOpsAIAnalysis {
+  incidentId: string;
+  summary: string; // 1. What happened? Observable failure
+  rootCause: string; // 2. Root cause based on evidence
+  confidence: number; // 3. Confidence score 0.0 to 1.0
+  confidenceExplanation?: string; // 3. Explanation of confidence & supporting evidence
+  evidence: AIEvidenceItem[]; // 4. Corroborating evidence (OBSERVED FACT / AI INFERENCE / PROPOSED CHANGE)
+  affectedResources: AIAffectedResource[];
+  recommendedFix: AIRecommendedFix; // 5. Recommended safest fix
+  changePreview?: AIChangePreview; // 6. Exact change preview (resource -> namespace -> object -> container -> field -> current -> proposed)
+  expectedImpact?: string; // 7. Expected impact (downtime/restarts, affected resources)
+  riskExplanation?: string; // 8. Risk classification & explanation
+  rollback?: string; // 9. Rollback procedure
+  verificationCriteria?: AIVerificationCriteria; // 10. Verification Kubernetes conditions
+  saferAlternative: AISaferAlternative;
+  structuredRemediation?: StructuredRemediation;
+  requiresApproval: boolean;
+  additionalEvidenceNeeded: string[];
+  analyzedAt: number;
+  provider: string;
+  model: string;
+  status: AIAnalysisStatus;
+  errorMessage?: string;
+  executionSafe: boolean; // Flag verifying deterministic safety policy was applied
+  timing?: AITimingMetrics; // Millisecond latency breakdown across all pipeline stages
+}
+
+
