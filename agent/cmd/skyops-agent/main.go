@@ -150,7 +150,6 @@ func main() {
 	// Start background routines
 	go heartbeatService.Start(ctx)
 	go resourceCollector.Start(ctx)
-	go remediationExecutor.Start(ctx)
 
 	slog.Info("SkyOps Agent running in active observation mode")
 
