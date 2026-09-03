@@ -15,8 +15,7 @@ import {
   OrgMember,
   OverviewMetrics,
   Role,
-  SkyOpsAIAnalysis,
-  StructuredRemediation,
+  RemediationAction,
   TimelineEvent,
   User
 } from '../src/types/index';
@@ -34,8 +33,7 @@ export class DataStore {
   private incidents: Map<string, Incident> = new Map(); // incidentId -> incident
   private incidentTimeline: Map<string, TimelineEvent[]> = new Map(); // incidentId -> events
   private incidentNotes: Map<string, IncidentNote[]> = new Map(); // incidentId -> notes
-  private remediations: Map<string, StructuredRemediation> = new Map(); // incidentId -> remediation
-  private aiAnalyses: Map<string, SkyOpsAIAnalysis> = new Map(); // incidentId -> analysis
+  private remediationActions: Map<string, RemediationAction> = new Map();
   private incidentCounter = 1001;
   private storagePath = path.join(process.cwd(), 'data', 'skyops_store.json');
   private saveTimeout: NodeJS.Timeout | null = null;
@@ -62,8 +60,7 @@ export class DataStore {
         if (data.incidents) this.incidents = new Map(Object.entries(data.incidents));
         if (data.incidentTimeline) this.incidentTimeline = new Map(Object.entries(data.incidentTimeline));
         if (data.incidentNotes) this.incidentNotes = new Map(Object.entries(data.incidentNotes));
-        if (data.remediations) this.remediations = new Map(Object.entries(data.remediations));
-        if (data.aiAnalyses) this.aiAnalyses = new Map(Object.entries(data.aiAnalyses));
+        if (data.remediationActions) this.remediationActions = new Map(Object.entries(data.remediationActions));
         if (data.incidentCounter) this.incidentCounter = data.incidentCounter;
       }
     } catch (err) {
@@ -89,8 +86,7 @@ export class DataStore {
           incidents: Object.fromEntries(this.incidents),
           incidentTimeline: Object.fromEntries(this.incidentTimeline),
           incidentNotes: Object.fromEntries(this.incidentNotes),
-          remediations: Object.fromEntries(this.remediations),
-          aiAnalyses: Object.fromEntries(this.aiAnalyses),
+          remediationActions: Object.fromEntries(this.remediationActions),
           incidentCounter: this.incidentCounter
         };
         fs.writeFileSync(this.storagePath, JSON.stringify(data, null, 2), 'utf8');
@@ -618,7 +614,7 @@ export class DataStore {
 
         if (matchingResource) {
           const recovery = IncidentDetector.evaluateRecovery(matchingResource, inc.incidentType);
-          if (recovery.recovered) {
+          if (recovery.recovered && this.canResolveFromTelemetry(inc, matchingResource)) {
             inc.status = 'RESOLVED';
             inc.resolvedAt = Date.now();
             inc.updatedAt = Date.now();
@@ -1161,7 +1157,7 @@ export class DataStore {
 
     for (const activeInc of activeIncidentsForResource) {
       const recovery = IncidentDetector.evaluateRecovery(resource, activeInc.incidentType);
-      if (recovery.recovered) {
+      if (recovery.recovered && this.canResolveFromTelemetry(activeInc, resource)) {
         activeInc.status = 'RESOLVED';
         activeInc.resolvedAt = Date.now();
         activeInc.updatedAt = Date.now();
@@ -1177,6 +1173,22 @@ export class DataStore {
     }
 
     return null;
+  }
+
+  /** Evidence that closes an action-backed incident must be an observation received after the Agent result. */
+  private canResolveFromTelemetry(incident: Incident, resource: KubernetesResource): boolean {
+    const actions = [...this.remediationActions.values()].filter(a => a.incidentId === incident.id);
+    if (actions.length === 0) return true;
+    const action = actions.find(a => a.status === 'SUCCEEDED' && a.completedAt && resource.updatedAt > a.completedAt!);
+    if (!action) return false;
+    if (action) {
+      this.addTimelineEvent(incident.id, {
+        type: 'RECOVERY', actor: { type: 'AGENT', name: 'SkyOps Telemetry Engine' },
+        description: 'Verification passed from fresh Agent telemetry observed after remediation execution',
+        metadata: { actionId: action.id, actionCompletedAt: action.completedAt, telemetryObservedAt: resource.updatedAt, verificationResult: 'PASSED' }
+      });
+    }
+    return true;
   }
 
   private updateClusterIncidentCount(clusterId: string) {
@@ -1327,6 +1339,53 @@ export class DataStore {
     const inc = this.getIncident(incidentId, orgId);
     if (!inc) return [];
     return (this.incidentNotes.get(incidentId) || []).slice().sort((a, b) => a.createdAt - b.createdAt);
+  }
+
+  /** Queue only a narrow, reviewed mutation. This is the human approval boundary. */
+  public approvePodImageReplacement(
+    incidentId: string,
+    orgId: string,
+    approval: { container: string; expectedCurrentValue: string; proposedValue: string },
+    user: { id: string; name: string }
+  ): RemediationAction {
+    const incident = this.getIncident(incidentId, orgId);
+    if (!incident) throw new Error('Incident not found');
+    if (incident.resourceKind !== 'Pod') throw new Error('Only Pod image replacement is supported');
+    if (!approval.container || !approval.expectedCurrentValue || !approval.proposedValue) throw new Error('Container and both image values are required');
+    if (approval.expectedCurrentValue === approval.proposedValue) throw new Error('Proposed image must differ from the current image');
+    const observed = (incident.technicalDetails.containers || []).find(c => c.name === approval.container);
+    if (!observed || observed.image !== approval.expectedCurrentValue) throw new Error('Expected current image does not match authoritative Agent telemetry');
+    const action: RemediationAction = {
+      id: `act-${crypto.randomBytes(12).toString('hex')}`, incidentId, clusterId: incident.clusterId,
+      type: 'ReplacePodImage', target: { kind: 'Pod', namespace: incident.namespace, name: incident.resourceName, container: approval.container },
+      fieldPath: `/spec/containers/${approval.container}/image`, expectedCurrentValue: approval.expectedCurrentValue,
+      proposedValue: approval.proposedValue, approvingUserId: user.id, approvingUserName: user.name,
+      approvedAt: Date.now(), status: 'PENDING'
+    };
+    this.remediationActions.set(action.id, action);
+    incident.status = 'IN_PROGRESS'; incident.updatedAt = Date.now();
+    this.addTimelineEvent(incidentId, { type: 'REMEDIATION_APPROVED', actor: { type: 'USER', id: user.id, name: user.name }, description: `Approved ReplacePodImage for ${incident.namespace}/${incident.resourceName}:${approval.container}`, metadata: { actionId: action.id, fieldPath: action.fieldPath, before: action.expectedCurrentValue, proposed: action.proposedValue } });
+    this.saveSnapshot();
+    return action;
+  }
+
+  public claimPendingRemediationActions(clusterId: string): RemediationAction[] {
+    const actions = [...this.remediationActions.values()].filter(a => a.clusterId === clusterId && a.status === 'PENDING');
+    for (const action of actions) { action.status = 'DELIVERED'; action.deliveredAt = Date.now(); }
+    if (actions.length) this.saveSnapshot();
+    return actions;
+  }
+
+  public recordRemediationResult(clusterId: string, actionId: string, result: { success: boolean; message: string }): RemediationAction | null {
+    const action = this.remediationActions.get(actionId);
+    if (!action || action.clusterId !== clusterId || action.status !== 'DELIVERED') return null;
+    action.status = result.success ? 'SUCCEEDED' : 'FAILED'; action.completedAt = Date.now(); action.executionResult = result;
+    const incident = this.incidents.get(action.incidentId);
+    if (incident) {
+      incident.updatedAt = Date.now();
+      this.addTimelineEvent(incident.id, { type: 'REMEDIATION_EXECUTED', actor: { type: 'AGENT', name: 'SkyOps Agent' }, description: result.success ? 'Agent executed approved remediation; awaiting fresh telemetry verification' : `Agent rejected or failed remediation: ${result.message}`, metadata: { actionId, ...result } });
+    }
+    this.saveSnapshot(); return action;
   }
 
   public addIncidentNote(

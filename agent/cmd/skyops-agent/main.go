@@ -114,14 +114,45 @@ func main() {
 	resourceCollector := collector.NewCollector(cfg, transportClient, telemetryQueue, kClient)
 	resourceCollector.SetStateUpdater(heartbeatService)
 
-	remediationExecutor := executor.NewExecutor(cfg, transportClient, kClient)
+	actionExecutor, executorErr := executor.NewInCluster()
+	if executorErr != nil {
+		slog.Warn("Typed remediation executor disabled", "error", executorErr)
+	} else {
+		go func() {
+			ticker := time.NewTicker(cfg.ActionPollInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					actions, err := transportClient.PollActions(ctx)
+					if err != nil {
+						slog.Warn("Action poll failed", "error", err)
+						continue
+					}
+					for _, action := range actions {
+						err := actionExecutor.Execute(ctx, action)
+						message := "approved typed action executed"
+						if err != nil {
+							message = err.Error()
+							slog.Warn("Typed action rejected or failed", "actionId", action.ID, "error", err)
+						}
+						if reportErr := transportClient.ReportActionResult(ctx, action.ID, err == nil, message); reportErr != nil {
+							slog.Error("Failed to report action result", "actionId", action.ID, "error", reportErr)
+						}
+					}
+				}
+			}
+		}()
+	}
 
 	// Start background routines
 	go heartbeatService.Start(ctx)
 	go resourceCollector.Start(ctx)
 	go remediationExecutor.Start(ctx)
 
-	slog.Info("SkyOps Agent running in active observation and remediation mode")
+	slog.Info("SkyOps Agent running in active observation mode")
 
 	// Wait for shutdown signal
 	<-ctx.Done()

@@ -196,6 +196,25 @@ export interface Incident {
   aiAnalysis?: SkyOpsAIAnalysis;
 }
 
+/** A human-approved, deterministic mutation which an Agent may execute. */
+export interface RemediationAction {
+  id: string;
+  incidentId: string;
+  clusterId: string;
+  type: 'ReplacePodImage';
+  target: { kind: 'Pod'; namespace: string; name: string; container: string };
+  fieldPath: string;
+  expectedCurrentValue: string;
+  proposedValue: string;
+  approvingUserId: string;
+  approvingUserName: string;
+  approvedAt: number;
+  status: 'PENDING' | 'DELIVERED' | 'SUCCEEDED' | 'FAILED';
+  deliveredAt?: number;
+  completedAt?: number;
+  executionResult?: { success: boolean; message: string };
+}
+
 export type TimelineEventType =
   | 'DETECTION'
   | 'OCCURRENCE'
@@ -204,7 +223,9 @@ export type TimelineEventType =
   | 'ASSIGNMENT'
   | 'NOTE_ADDED'
   | 'RECOVERY'
-  | 'MANUAL_UPDATE';
+  | 'MANUAL_UPDATE'
+  | 'REMEDIATION_APPROVED'
+  | 'REMEDIATION_EXECUTED';
 
 export interface TimelineEvent {
   id: string;

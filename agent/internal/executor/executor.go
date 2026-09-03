@@ -1,114 +1,73 @@
+// Package executor applies only SkyOps' typed remediation contract through client-go.
 package executor
 
 import (
 	"context"
 	"fmt"
-	"log/slog"
-	"time"
 
-	"github.com/skyops-io/skyops/agent/internal/collector"
-	"github.com/skyops-io/skyops/agent/internal/config"
 	"github.com/skyops-io/skyops/agent/internal/transport"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
-// Executor periodically checks for approved structured remediation commands and executes them safely
-type Executor struct {
-	cfg       *config.Config
-	transport *transport.Client
-	k8sClient *collector.InClusterK8sClient
-	interval  time.Duration
-}
+type Executor struct{ client kubernetes.Interface }
 
-// NewExecutor creates a new remediation executor service
-func NewExecutor(cfg *config.Config, transport *transport.Client, k8sClient *collector.InClusterK8sClient) *Executor {
-	return &Executor{
-		cfg:       cfg,
-		transport: transport,
-		k8sClient: k8sClient,
-		interval:  10 * time.Second,
-	}
-}
-
-// Start begins polling for approved actions and executing them
-func (e *Executor) Start(ctx context.Context) {
-	slog.Info("Remediation execution loop started", "pollInterval", e.interval.String())
-	ticker := time.NewTicker(e.interval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			slog.Info("Remediation execution loop stopped")
-			return
-		case <-ticker.C:
-			e.pollAndExecute(ctx)
-		}
-	}
-}
-
-func (e *Executor) pollAndExecute(ctx context.Context) {
-	actions, err := e.transport.FetchPendingActions(ctx)
+func NewInCluster() (*Executor, error) {
+	cfg, err := rest.InClusterConfig()
 	if err != nil {
-		slog.Debug("Pending actions check notice", "error", err.Error())
-		return
+		return nil, err
 	}
+	client, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &Executor{client: client}, nil
+}
 
-	for _, action := range actions {
-		slog.Info("Discovered approved remediation action",
-			"actionId", action.ID,
-			"incidentId", action.IncidentID,
-			"actionType", action.ActionType,
-			"resource", fmt.Sprintf("%s/%s", action.TargetResource.Kind, action.TargetResource.Name),
-			"proposedImage", action.Parameters.ProposedImage,
-		)
-
-		if e.k8sClient == nil {
-			slog.Warn("Skipping execution: in-cluster Kubernetes client unavailable in simulated environment")
-			_ = e.transport.SendActionResult(ctx, action.ID, transport.ActionResultPayload{
-				Status:  "SUCCESS",
-				Message: fmt.Sprintf("Simulated in-cluster agent applied image patch: %s -> %s", action.Parameters.CurrentImage, action.Parameters.ProposedImage),
-				AppliedChanges: map[string]interface{}{
-					"container": action.Parameters.ContainerName,
-					"image":     action.Parameters.ProposedImage,
-				},
-				AgentVersion: e.cfg.AgentVersion,
-			})
-			continue
-		}
-
-		// Execute typed patch deterministically
-		var execErr error
-		if action.ActionType == "UPDATE_CONTAINER_IMAGE" || action.ActionType == "REVERT_TAG" {
-			execErr = e.k8sClient.UpdateWorkloadImage(
-				ctx,
-				action.TargetResource.Kind,
-				action.TargetResource.Namespace,
-				action.TargetResource.Name,
-				action.Parameters.ContainerName,
-				action.Parameters.ProposedImage,
-			)
-		} else {
-			execErr = fmt.Errorf("unsupported action type: %s", action.ActionType)
-		}
-
-		if execErr != nil {
-			slog.Error("Failed to apply Kubernetes remediation patch", "actionId", action.ID, "error", execErr)
-			_ = e.transport.SendActionResult(ctx, action.ID, transport.ActionResultPayload{
-				Status:       "FAILED",
-				Message:      fmt.Sprintf("Kubernetes API error: %v", execErr),
-				AgentVersion: e.cfg.AgentVersion,
-			})
-		} else {
-			slog.Info("Successfully applied Kubernetes remediation patch", "actionId", action.ID)
-			_ = e.transport.SendActionResult(ctx, action.ID, transport.ActionResultPayload{
-				Status:  "SUCCESS",
-				Message: fmt.Sprintf("Applied Strategic Merge Patch to update container %s image to %s", action.Parameters.ContainerName, action.Parameters.ProposedImage),
-				AppliedChanges: map[string]interface{}{
-					"container": action.Parameters.ContainerName,
-					"image":     action.Parameters.ProposedImage,
-				},
-				AgentVersion: e.cfg.AgentVersion,
-			})
+// Execute refuses command strings and unknown types. A standalone kubectl-run Pod
+// cannot have its image patched (PodSpec is immutable), so it is replaced from its
+// current API object only after checking the expected image value.
+func (e *Executor) Execute(ctx context.Context, action transport.RemediationAction) error {
+	if action.Type != "ReplacePodImage" || action.Target.Kind != "Pod" || action.Target.Namespace == "" || action.Target.Name == "" || action.Target.Container == "" || action.ExpectedCurrentValue == "" || action.ProposedValue == "" {
+		return fmt.Errorf("unsupported or malformed typed remediation action")
+	}
+	if action.FieldPath != "/spec/containers/"+action.Target.Container+"/image" {
+		return fmt.Errorf("field path does not match target container")
+	}
+	pods := e.client.CoreV1().Pods(action.Target.Namespace)
+	pod, err := pods.Get(ctx, action.Target.Name, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("read target pod: %w", err)
+	}
+	if len(pod.OwnerReferences) != 0 {
+		return fmt.Errorf("refusing to replace controller-owned Pod; update the owning workload instead")
+	}
+	found := false
+	for i := range pod.Spec.Containers {
+		if pod.Spec.Containers[i].Name == action.Target.Container {
+			found = true
+			if pod.Spec.Containers[i].Image != action.ExpectedCurrentValue {
+				return fmt.Errorf("expected image %q does not match live value %q", action.ExpectedCurrentValue, pod.Spec.Containers[i].Image)
+			}
+			pod.Spec.Containers[i].Image = action.ProposedValue
 		}
 	}
+	if !found {
+		return fmt.Errorf("target container not found")
+	}
+	pod.ResourceVersion = ""
+	pod.UID = ""
+	pod.CreationTimestamp = metav1.Time{}
+	pod.ManagedFields = nil
+	pod.Status = corev1.PodStatus{}
+	pod.OwnerReferences = nil
+	if err := pods.Delete(ctx, action.Target.Name, metav1.DeleteOptions{}); err != nil {
+		return fmt.Errorf("delete immutable pod: %w", err)
+	}
+	if _, err := pods.Create(ctx, pod, metav1.CreateOptions{}); err != nil {
+		return fmt.Errorf("create replacement pod: %w", err)
+	}
+	return nil
 }

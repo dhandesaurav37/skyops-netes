@@ -88,6 +88,18 @@ type HeartbeatPayload struct {
 	Timestamp    int64  `json:"timestamp"`
 }
 
+// RemediationAction is deliberately narrow: agents reject every action type other
+// than a reviewed pod image replacement.
+type RemediationAction struct {
+	ID                   string                                            `json:"id"`
+	IncidentID           string                                            `json:"incidentId"`
+	Type                 string                                            `json:"type"`
+	Target               struct{ Kind, Namespace, Name, Container string } `json:"target"`
+	FieldPath            string                                            `json:"fieldPath"`
+	ExpectedCurrentValue string                                            `json:"expectedCurrentValue"`
+	ProposedValue        string                                            `json:"proposedValue"`
+}
+
 // SendHeartbeat sends a periodic heartbeat with exponential retry backoff
 func (c *Client) SendHeartbeat(ctx context.Context, payload HeartbeatPayload) error {
 	url := fmt.Sprintf("%s/api/v1/agent/heartbeat", c.cfg.ServerURL)
@@ -100,69 +112,32 @@ func (c *Client) SendTelemetry(ctx context.Context, payload interface{}) error {
 	return c.postWithRetry(ctx, url, payload)
 }
 
-// AgentAction represents an approved, structured remediation command from SkyOps platform
-type AgentAction struct {
-	ID             string `json:"id"`
-	IncidentID     string `json:"incidentId"`
-	ActionType     string `json:"actionType"`
-	TargetResource struct {
-		Kind      string `json:"kind"`
-		Namespace string `json:"namespace"`
-		Name      string `json:"name"`
-	} `json:"targetResource"`
-	Parameters struct {
-		ContainerName string `json:"containerName"`
-		CurrentImage  string `json:"currentImage"`
-		ProposedImage string `json:"proposedImage"`
-	} `json:"parameters"`
-	Status string `json:"status"`
-}
-
-type PendingActionsResponse struct {
-	Status    string        `json:"status"`
-	ClusterID string        `json:"clusterId"`
-	Actions   []AgentAction `json:"actions"`
-}
-
-type ActionResultPayload struct {
-	Status         string                 `json:"status"`
-	Message        string                 `json:"message,omitempty"`
-	AppliedChanges map[string]interface{} `json:"appliedChanges,omitempty"`
-	AgentVersion   string                 `json:"agentVersion,omitempty"`
-}
-
-// FetchPendingActions queries the SkyOps server for approved remediation commands
-func (c *Client) FetchPendingActions(ctx context.Context) ([]AgentAction, error) {
-	url := fmt.Sprintf("%s/api/v1/agent/actions", c.cfg.ServerURL)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+func (c *Client) PollActions(ctx context.Context) ([]RemediationAction, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/api/v1/agent/actions", c.cfg.ServerURL), nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.cfg.AgentToken))
-	req.Header.Set("User-Agent", fmt.Sprintf("SkyOpsAgent/%s", c.cfg.AgentVersion))
-
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("actions API returned HTTP %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("action poll returned HTTP %d: %s", resp.StatusCode, body)
 	}
-
-	var res PendingActionsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+	var body struct {
+		Actions []RemediationAction `json:"actions"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		return nil, err
 	}
-	return res.Actions, nil
+	return body.Actions, nil
 }
 
-// SendActionResult reports the result of executing an approved remediation back to the server
-func (c *Client) SendActionResult(ctx context.Context, actionID string, payload ActionResultPayload) error {
-	url := fmt.Sprintf("%s/api/v1/agent/actions/%s/result", c.cfg.ServerURL, actionID)
-	return c.postWithRetry(ctx, url, payload)
+func (c *Client) ReportActionResult(ctx context.Context, actionID string, success bool, message string) error {
+	return c.postWithRetry(ctx, fmt.Sprintf("%s/api/v1/agent/actions/%s/result", c.cfg.ServerURL, actionID), map[string]interface{}{"success": success, "message": message})
 }
 
 func (c *Client) postWithRetry(ctx context.Context, url string, payload interface{}) error {
