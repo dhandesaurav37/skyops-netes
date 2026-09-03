@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -319,4 +320,82 @@ type K8sEvent struct {
 	FirstTimestamp string `json:"firstTimestamp"`
 	LastTimestamp  string `json:"lastTimestamp"`
 	EventTime      string `json:"eventTime"`
+}
+
+// PatchStrategicMerge sends a strategic merge patch to the Kubernetes API
+func (k *InClusterK8sClient) PatchStrategicMerge(ctx context.Context, apiPath string, patchBytes []byte) error {
+	url := fmt.Sprintf("%s%s", k.apiBaseURL, apiPath)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, url, bytes.NewReader(patchBytes))
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+k.token)
+	req.Header.Set("Content-Type", "application/strategic-merge-patch+json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := k.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("kubernetes API PATCH %s returned HTTP %d: %s", apiPath, resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// UpdateWorkloadImage applies a typed image patch to a Pod or Deployment
+func (k *InClusterK8sClient) UpdateWorkloadImage(ctx context.Context, kind, namespace, name, containerName, newImage string) error {
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	switch strings.ToLower(kind) {
+	case "pod":
+		patch := map[string]interface{}{
+			"spec": map[string]interface{}{
+				"containers": []map[string]interface{}{
+					{
+						"name":  containerName,
+						"image": newImage,
+					},
+				},
+			},
+		}
+		patchBytes, err := json.Marshal(patch)
+		if err != nil {
+			return err
+		}
+		apiPath := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s", namespace, name)
+		return k.PatchStrategicMerge(ctx, apiPath, patchBytes)
+
+	case "deployment":
+		patch := map[string]interface{}{
+			"spec": map[string]interface{}{
+				"template": map[string]interface{}{
+					"spec": map[string]interface{}{
+						"containers": []map[string]interface{}{
+							{
+								"name":  containerName,
+								"image": newImage,
+							},
+						},
+					},
+				},
+			},
+		}
+		patchBytes, err := json.Marshal(patch)
+		if err != nil {
+			return err
+		}
+		apiPath := fmt.Sprintf("/apis/apps/v1/namespaces/%s/deployments/%s", namespace, name)
+		return k.PatchStrategicMerge(ctx, apiPath, patchBytes)
+
+	default:
+		return fmt.Errorf("unsupported resource kind for image update: %s", kind)
+	}
 }

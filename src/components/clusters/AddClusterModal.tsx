@@ -18,7 +18,7 @@ import {
 import React, { useEffect, useState } from 'react';
 import { api } from '../../api/client';
 import { AgentManifestsResponse, Cluster } from '../../types/index';
-import { Button, CodeBlock, Modal } from '../common/UI';
+import { Button, Modal } from '../common/UI';
 
 interface AddClusterModalProps {
   isOpen: boolean;
@@ -46,10 +46,7 @@ export const AddClusterModal: React.FC<AddClusterModalProps> = ({
   const [copied, setCopied] = useState(false);
   const [logCommandCopied, setLogCommandCopied] = useState(false);
 
-  // Installation method selection tabs
-  const [installMethod, setInstallMethod] = useState<'one-command' | 'kubectl' | 'helm' | 'yaml'>('one-command');
-
-  // Step 3 Activation Code State
+  // Step 3 Activation Code & Handshake State
   const [activationCode, setActivationCode] = useState('');
   const [verifying, setVerifying] = useState(false);
   const [verifySuccess, setVerifySuccess] = useState(false);
@@ -83,15 +80,7 @@ export const AddClusterModal: React.FC<AddClusterModalProps> = ({
 
   // Copy command helper
   const handleCopyCommand = async (textToCopy?: string) => {
-    const text =
-      textToCopy ||
-      (installMethod === 'one-command'
-        ? manifestData?.oneCommandInstall || manifestData?.installCommand
-        : installMethod === 'kubectl'
-        ? manifestData?.installCommand
-        : installMethod === 'helm'
-        ? manifestData?.helmCommand
-        : manifestData?.kubectlManifest);
+    const text = textToCopy || manifestData?.oneCommandInstall || manifestData?.installCommand;
     if (!text) return;
     try {
       await navigator.clipboard.writeText(text);
@@ -181,7 +170,6 @@ export const AddClusterModal: React.FC<AddClusterModalProps> = ({
     setVerifying(false);
     setVerifySuccess(false);
     setAgentPulseDetected(false);
-    setInstallMethod('one-command');
     setError(null);
     onClose();
   };
@@ -340,121 +328,42 @@ export const AddClusterModal: React.FC<AddClusterModalProps> = ({
               </p>
             </div>
 
-            {/* Installation Method Switcher Tabs */}
-            <div className="flex items-center gap-1 border-b border-zinc-800 pb-2">
-              <button
-                type="button"
-                onClick={() => setInstallMethod('one-command')}
-                className={`px-3 py-1.5 text-xs font-mono rounded-lg transition-all ${
-                  installMethod === 'one-command'
-                    ? 'bg-sky-950 text-sky-300 border border-sky-800 font-semibold'
-                    : 'text-zinc-400 hover:text-zinc-200'
-                }`}
-              >
-                One-Command (Recommended)
-              </button>
-              <button
-                type="button"
-                onClick={() => setInstallMethod('kubectl')}
-                className={`px-3 py-1.5 text-xs font-mono rounded-lg transition-all ${
-                  installMethod === 'kubectl'
-                    ? 'bg-sky-950 text-sky-300 border border-sky-800 font-semibold'
-                    : 'text-zinc-400 hover:text-zinc-200'
-                }`}
-              >
-                kubectl apply
-              </button>
-              <button
-                type="button"
-                onClick={() => setInstallMethod('helm')}
-                className={`px-3 py-1.5 text-xs font-mono rounded-lg transition-all ${
-                  installMethod === 'helm'
-                    ? 'bg-sky-950 text-sky-300 border border-sky-800 font-semibold'
-                    : 'text-zinc-400 hover:text-zinc-200'
-                }`}
-              >
-                Helm Chart
-              </button>
-              <button
-                type="button"
-                onClick={() => setInstallMethod('yaml')}
-                className={`px-3 py-1.5 text-xs font-mono rounded-lg transition-all ${
-                  installMethod === 'yaml'
-                    ? 'bg-sky-950 text-sky-300 border border-sky-800 font-semibold'
-                    : 'text-zinc-400 hover:text-zinc-200'
-                }`}
-              >
-                Raw YAML
-              </button>
-            </div>
-
             {/* Command Display */}
-            {installMethod === 'one-command' && (
-              <div className="space-y-2">
-                <div className="relative group bg-zinc-950 border border-zinc-800 rounded-xl p-4 font-mono text-xs text-zinc-200 break-all leading-relaxed shadow-inner">
-                  <div className="pr-20 text-sky-300 select-all font-medium">
-                    {manifestData.oneCommandInstall || manifestData.installCommand}
-                  </div>
-                  <div className="absolute right-3 top-3">
-                    <button
-                      type="button"
-                      onClick={() => handleCopyCommand(manifestData.oneCommandInstall || manifestData.installCommand)}
-                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono font-medium transition-all ${
-                        copied
-                          ? 'bg-emerald-500 text-zinc-950'
-                          : 'bg-sky-500 hover:bg-sky-400 text-zinc-950 shadow-sm'
-                      }`}
-                    >
-                      {copied ? (
-                        <>
-                          <Check className="w-3.5 h-3.5 stroke-[3]" />
-                          Copied
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="w-3.5 h-3.5" />
-                          Copy
-                        </>
-                      )}
-                    </button>
-                  </div>
+            <div className="space-y-2">
+              <div className="relative group bg-zinc-950 border border-zinc-800 rounded-xl p-4 font-mono text-xs text-zinc-200 break-all leading-relaxed shadow-inner">
+                <div className="pr-20 text-sky-300 select-all font-medium">
+                  {manifestData.oneCommandInstall || manifestData.installCommand}
                 </div>
-                <p className="text-[11px] font-mono text-zinc-500">
-                  Performs preflight checks for kubectl, validates cluster reachability, creates namespace{' '}
-                  <code className="text-zinc-400">skyops-system</code>, applies secrets and deployment, and waits for
-                  rollout.
-                </p>
+                <div className="absolute right-3 top-3">
+                  <button
+                    type="button"
+                    onClick={() => handleCopyCommand(manifestData.oneCommandInstall || manifestData.installCommand)}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono font-medium transition-all ${
+                      copied
+                        ? 'bg-emerald-500 text-zinc-950'
+                        : 'bg-sky-500 hover:bg-sky-400 text-zinc-950 shadow-sm'
+                    }`}
+                  >
+                    {copied ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 stroke-[3]" />
+                        Copied
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5" />
+                        Copy
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
-            )}
-
-            {installMethod === 'kubectl' && (
-              <div className="space-y-2">
-                <CodeBlock
-                  language="bash"
-                  title="Direct kubectl Apply"
-                  code={
-                    manifestData.installCommand ||
-                    `kubectl apply -f "${manifestData.serverUrl}/api/v1/clusters/${createdCluster.id}/manifest.yaml"`
-                  }
-                />
-              </div>
-            )}
-
-            {installMethod === 'helm' && (
-              <div className="space-y-2">
-                <CodeBlock language="bash" title="Helm 3 Upgrade / Install" code={manifestData.helmCommand} />
-              </div>
-            )}
-
-            {installMethod === 'yaml' && (
-              <div className="space-y-2">
-                <CodeBlock
-                  language="yaml"
-                  title={`Kubernetes Manifest (Cluster: ${createdCluster.name})`}
-                  code={manifestData.kubectlManifest}
-                />
-              </div>
-            )}
+              <p className="text-[11px] font-mono text-zinc-500">
+                Performs preflight checks for kubectl, validates cluster reachability, creates namespace{' '}
+                <code className="text-zinc-400">skyops-system</code>, applies secrets and deployment, and waits for
+                rollout.
+              </p>
+            </div>
 
             {/* Security checklist */}
             <div className="p-3.5 bg-zinc-900/40 border border-zinc-800/70 rounded-xl space-y-2">
