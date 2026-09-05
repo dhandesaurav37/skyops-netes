@@ -360,6 +360,12 @@ export class SafetyPolicyEngine {
               targetResource: safeAffected[0],
               parameters: structuredRemediation.parameters
             }
+          : actionType !== 'UNSPECIFIED'
+          ? {
+              type: actionType,
+              targetResource: safeAffected[0],
+              parameters: {}
+            }
           : undefined
       },
       changePreview,

@@ -24,9 +24,44 @@ export interface RecoveryResult {
  */
 export class IncidentDetector {
   /**
+   * Determines whether a resource is part of the SkyOps telemetry agent infrastructure.
+   * Agent components are monitored through dedicated cluster connectivity and heartbeats,
+   * not as customer workload incident tickets.
+   */
+  public static isAgentInfrastructure(resource: KubernetesResource): boolean {
+    if (!resource) return false;
+    const ns = (resource.namespace || '').toLowerCase();
+    const name = (resource.name || '').toLowerCase();
+
+    // The official SkyOps agent namespace is skyops-system (or skyops)
+    if (ns === 'skyops-system' || ns === 'skyops') {
+      return true;
+    }
+
+    // Workload explicitly named or prefixed as skyops-agent
+    if (name === 'skyops-agent' || name.startsWith('skyops-agent-')) {
+      return true;
+    }
+
+    const appLabel = resource.specSummary?.['app.kubernetes.io/name'] || (resource as any).labels?.['app.kubernetes.io/name'];
+    const partOfLabel = resource.specSummary?.['app.kubernetes.io/part-of'] || (resource as any).labels?.['app.kubernetes.io/part-of'];
+
+    if (appLabel === 'skyops-agent' || partOfLabel === 'skyops') {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
    * Evaluate a single resource observation
    */
   public static evaluateResource(resource: KubernetesResource): DetectionResult | null {
+    // Never flag SkyOps telemetry agent infrastructure as customer incident tickets
+    if (this.isAgentInfrastructure(resource)) {
+      return null;
+    }
+
     let result: DetectionResult | null;
     switch (resource.kind) {
       case 'Pod':
@@ -324,6 +359,10 @@ export class IncidentDetector {
    * Deployment Rule Evaluation
    */
   private static evaluateDeployment(resource: KubernetesResource): DetectionResult | null {
+    if (this.isAgentInfrastructure(resource)) {
+      return null;
+    }
+
     const desired = Number(resource.specSummary?.replicas ?? 1);
     const ready = Number(resource.statusSummary?.readyReplicas ?? resource.statusSummary?.availableReplicas ?? 0);
     const available = Number(resource.statusSummary?.availableReplicas ?? resource.statusSummary?.readyReplicas ?? 0);
@@ -333,15 +372,41 @@ export class IncidentDetector {
 
     // Check Kubernetes Deployment Conditions
     const isAvailableCondition = conditions.some((c) => c.type === 'Available' && (c.status === 'True' || c.status === 'true'));
-    const isProgressingCondition = conditions.some((c) => c.type === 'Progressing' && (c.status === 'True' || c.status === 'true') && c.reason === 'NewReplicaSetAvailable');
-    const isExplicitlyFailed = conditions.some((c) => (c.type === 'Available' && c.status === 'False') || (c.type === 'ReplicaFailure' && c.status === 'True'));
 
-    // If Kubernetes explicitly marks the deployment as Available or progressing normally with ready replicas, it is healthy
+    // In Kubernetes, Progressing=True indicates an active rollout in progress (e.g. ReplicaSetUpdated, NewReplicaSetCreated, NewReplicaSetAvailable)
+    const progressingCondition = conditions.find((c) => c.type === 'Progressing');
+    const isProgressingHealthy = progressingCondition ? (progressingCondition.status === 'True' || progressingCondition.status === 'true') : false;
+
+    // Explicit failure conditions in Kubernetes:
+    // 1. ProgressDeadlineExceeded: The deployment failed to make progress within spec.progressDeadlineSeconds
+    const isProgressDeadlineExceeded = conditions.some(
+      (c) => c.type === 'Progressing' && (c.status === 'False' || c.status === 'false') && c.reason === 'ProgressDeadlineExceeded'
+    );
+    // 2. ReplicaFailure: Pod creation failed at the ReplicaSet level (e.g., quota exceeded)
+    const isReplicaFailure = conditions.some(
+      (c) => c.type === 'ReplicaFailure' && (c.status === 'True' || c.status === 'true')
+    );
+
+    // If Kubernetes explicitly marks the deployment as Available or ready >= desired, it is healthy
     if (isAvailableCondition || (ready >= desired && desired > 0) || (available >= desired && desired > 0)) {
       return null;
     }
 
-    if (desired > 0 && (isExplicitlyFailed || (ready === 0 && available === 0 && !isProgressingCondition) || (ready < desired && available < desired && !isAvailableCondition))) {
+    // Startup / Rollout Grace Period:
+    // If the deployment was recently created or updated (e.g., within 5 minutes / 300,000ms)
+    // and is actively progressing without progress deadline failure or replica failure,
+    // Kubernetes is in the middle of standard pod scheduling and image pulling. This is NOT an incident.
+    const ageMs = resource.createdAt ? Date.now() - resource.createdAt : 0;
+    const isWithinRolloutGraceWindow = resource.createdAt ? ageMs < 300000 : false;
+    const isInFlightStartup = isProgressingHealthy && !isProgressDeadlineExceeded && !isReplicaFailure && (isWithinRolloutGraceWindow || !resource.createdAt);
+
+    if (isInFlightStartup && !isProgressDeadlineExceeded && !isReplicaFailure) {
+      return null;
+    }
+
+    const isExplicitlyFailed = isProgressDeadlineExceeded || isReplicaFailure;
+
+    if (desired > 0 && (isExplicitlyFailed || (!isInFlightStartup && (ready < desired || available < desired)))) {
       const isCompleteOutage = ready === 0 && available === 0;
       return {
         detected: true,
@@ -354,7 +419,11 @@ export class IncidentDetector {
           readyReplicas: ready,
           updatedReplicas: updated,
           reason: isCompleteOutage ? 'DeploymentUnavailable' : 'DeploymentDegraded',
-          message: `Expected ${desired} ready replicas, but currently only ${ready} are ready.`,
+          message: isProgressDeadlineExceeded
+            ? `Deployment ${resource.name} exceeded its progress deadline without reaching available replicas.`
+            : isReplicaFailure
+            ? `Deployment ${resource.name} encountered replica creation failure.`
+            : `Expected ${desired} ready replicas, but currently only ${ready} are ready.`,
           conditions,
           events
         }

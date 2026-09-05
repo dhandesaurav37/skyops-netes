@@ -65,10 +65,57 @@ test('detects current readiness failure and resolves after readiness returns', (
 });
 
 test('detects and recovers deployment availability deterministically', () => {
-  const down: KubernetesResource = { ...pod(), kind: 'Deployment', name: 'skyops-agent', status: '0/1 Ready', specSummary: { replicas: 1 }, statusSummary: { readyReplicas: 0, availableReplicas: 0, updatedReplicas: 0 }, conditions: [{ type: 'Available', status: 'False' }], containers: [] };
+  const down: KubernetesResource = { ...pod(), kind: 'Deployment', name: 'payment-service', status: '0/1 Ready', specSummary: { replicas: 1 }, statusSummary: { readyReplicas: 0, availableReplicas: 0, updatedReplicas: 0 }, conditions: [{ type: 'Available', status: 'False' }], containers: [] };
   const healthy = { ...down, status: '1/1 Ready', statusSummary: { readyReplicas: 1, availableReplicas: 1, updatedReplicas: 1 }, conditions: [{ type: 'Available', status: 'True' }] };
   assert.equal(IncidentDetector.evaluateResource(down)?.incidentType, 'DeploymentDegraded');
   assert.equal(IncidentDetector.evaluateResource(healthy), null); assert.equal(IncidentDetector.evaluateRecovery(healthy, 'DeploymentDegraded').recovered, true);
+});
+
+test('exempts SkyOps agent infrastructure from generating false-positive incidents during launch', () => {
+  const agentDeployment: KubernetesResource = {
+    ...pod(),
+    kind: 'Deployment',
+    namespace: 'skyops-system',
+    name: 'skyops-agent',
+    status: '0/1 Ready',
+    specSummary: { replicas: 1 },
+    statusSummary: { readyReplicas: 0, availableReplicas: 0, updatedReplicas: 0 },
+    conditions: [{ type: 'Available', status: 'False' }],
+    containers: []
+  };
+  assert.equal(IncidentDetector.isAgentInfrastructure(agentDeployment), true);
+  assert.equal(IncidentDetector.evaluateResource(agentDeployment), null);
+});
+
+test('understands healthy in-flight deployment rollout vs deadline failure', () => {
+  // 1. Newly created deployment actively progressing within startup grace window
+  const inFlightRollout: KubernetesResource = {
+    ...pod(),
+    kind: 'Deployment',
+    name: 'web-service',
+    createdAt: Date.now() - 30000, // 30 seconds ago
+    status: '0/3 Ready',
+    specSummary: { replicas: 3 },
+    statusSummary: { readyReplicas: 0, availableReplicas: 0, updatedReplicas: 3 },
+    conditions: [
+      { type: 'Available', status: 'False', reason: 'MinimumReplicasUnavailable' },
+      { type: 'Progressing', status: 'True', reason: 'ReplicaSetUpdated', message: 'ReplicaSet is progressing' }
+    ],
+    containers: []
+  };
+  assert.equal(IncidentDetector.evaluateResource(inFlightRollout), null);
+
+  // 2. Deployment that failed progress deadline (spec.progressDeadlineSeconds exceeded)
+  const failedRollout: KubernetesResource = {
+    ...inFlightRollout,
+    conditions: [
+      { type: 'Available', status: 'False', reason: 'MinimumReplicasUnavailable' },
+      { type: 'Progressing', status: 'False', reason: 'ProgressDeadlineExceeded', message: 'Progress deadline exceeded' }
+    ]
+  };
+  const result = IncidentDetector.evaluateResource(failedRollout);
+  assert.equal(result?.incidentType, 'DeploymentDegraded');
+  assert.equal(result?.severity, 'CRITICAL');
 });
 
 test('detects node pressure, PVC pending, and service without endpoints', () => {

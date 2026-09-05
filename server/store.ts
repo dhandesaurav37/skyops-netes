@@ -16,6 +16,8 @@ import {
   OverviewMetrics,
   Role,
   RemediationAction,
+  SkyOpsAIAnalysis,
+  StructuredRemediation,
   TimelineEvent,
   User
 } from '../src/types/index';
@@ -34,6 +36,8 @@ export class DataStore {
   private incidentTimeline: Map<string, TimelineEvent[]> = new Map(); // incidentId -> events
   private incidentNotes: Map<string, IncidentNote[]> = new Map(); // incidentId -> notes
   private remediationActions: Map<string, RemediationAction> = new Map();
+  private remediations: Map<string, StructuredRemediation> = new Map(); // incidentId -> StructuredRemediation
+  private aiAnalyses: Map<string, SkyOpsAIAnalysis> = new Map(); // incidentId -> SkyOpsAIAnalysis
   private incidentCounter = 1001;
   private storagePath = path.join(process.cwd(), 'data', 'skyops_store.json');
   private saveTimeout: NodeJS.Timeout | null = null;
@@ -61,7 +65,27 @@ export class DataStore {
         if (data.incidentTimeline) this.incidentTimeline = new Map(Object.entries(data.incidentTimeline));
         if (data.incidentNotes) this.incidentNotes = new Map(Object.entries(data.incidentNotes));
         if (data.remediationActions) this.remediationActions = new Map(Object.entries(data.remediationActions));
+        if (data.remediations) this.remediations = new Map(Object.entries(data.remediations));
+        if (data.aiAnalyses) this.aiAnalyses = new Map(Object.entries(data.aiAnalyses));
         if (data.incidentCounter) this.incidentCounter = data.incidentCounter;
+
+        // Clean up any historical false-positive incidents generated against the SkyOps telemetry agent
+        for (const [id, inc] of Array.from(this.incidents.entries())) {
+          const resName = (inc.resourceName || '').toLowerCase();
+          const ns = (inc.namespace || '').toLowerCase();
+          if (
+            ns === 'skyops-system' ||
+            ns === 'skyops' ||
+            resName === 'skyops-agent' ||
+            resName.startsWith('skyops-agent-')
+          ) {
+            this.incidents.delete(id);
+            this.incidentTimeline.delete(id);
+            this.incidentNotes.delete(id);
+            this.remediations.delete(id);
+            this.aiAnalyses.delete(id);
+          }
+        }
       }
     } catch (err) {
       console.warn('[DataStore] Notice: Unable to load store snapshot, starting clean:', err);
@@ -87,6 +111,8 @@ export class DataStore {
           incidentTimeline: Object.fromEntries(this.incidentTimeline),
           incidentNotes: Object.fromEntries(this.incidentNotes),
           remediationActions: Object.fromEntries(this.remediationActions),
+          remediations: Object.fromEntries(this.remediations),
+          aiAnalyses: Object.fromEntries(this.aiAnalyses),
           incidentCounter: this.incidentCounter
         };
         fs.writeFileSync(this.storagePath, JSON.stringify(data, null, 2), 'utf8');
@@ -597,6 +623,26 @@ export class DataStore {
       }
     }
 
+    // Ensure agent infrastructure components do not leave legacy incident tickets
+    for (const [id, inc] of Array.from(this.incidents.entries())) {
+      if (inc.clusterId === clusterId) {
+        const resName = (inc.resourceName || '').toLowerCase();
+        const ns = (inc.namespace || '').toLowerCase();
+        if (
+          ns === 'skyops-system' ||
+          ns === 'skyops' ||
+          resName === 'skyops-agent' ||
+          resName.startsWith('skyops-agent-')
+        ) {
+          this.incidents.delete(id);
+          this.incidentTimeline.delete(id);
+          this.incidentNotes.delete(id);
+          this.remediations.delete(id);
+          this.aiAnalyses.delete(id);
+        }
+      }
+    }
+
     // Run deterministic incident detection & auto-recovery on each resource
     for (const res of incomingResources) {
       this.evaluateResourceObservation(cluster.orgId, clusterId, cluster.name, res);
@@ -1007,6 +1053,8 @@ export class DataStore {
     this.incidents.delete(incidentId);
     this.incidentTimeline.delete(incidentId);
     this.incidentNotes.delete(incidentId);
+    this.remediations.delete(incidentId);
+    this.aiAnalyses.delete(incidentId);
     this.updateClusterIncidentCount(inc.clusterId);
     this.saveSnapshot();
     return true;
@@ -1019,6 +1067,8 @@ export class DataStore {
         this.incidents.delete(id);
         this.incidentTimeline.delete(id);
         this.incidentNotes.delete(id);
+        this.remediations.delete(id);
+        this.aiAnalyses.delete(id);
         count++;
       }
     }
@@ -1044,6 +1094,11 @@ export class DataStore {
     clusterName: string,
     resource: KubernetesResource
   ): Incident | null {
+    // 0. Do not create customer incident tickets for the SkyOps agent platform itself
+    if (IncidentDetector.isAgentInfrastructure(resource)) {
+      return null;
+    }
+
     // 1. Evaluate Detection Rules
     const detection = IncidentDetector.evaluateResource(resource);
 
@@ -1248,7 +1303,12 @@ export class DataStore {
   }
 
   public getIncident(incidentId: string, orgId: string): Incident | null {
-    const inc = this.incidents.get(incidentId);
+    if (!incidentId) return null;
+    let inc = this.incidents.get(incidentId);
+    if (!inc) {
+      const target = incidentId.toLowerCase();
+      inc = Array.from(this.incidents.values()).find((i) => i.id.toLowerCase() === target);
+    }
     if (!inc || inc.orgId !== orgId) return null;
     return inc;
   }

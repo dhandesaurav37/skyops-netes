@@ -391,5 +391,7 @@
   "incidentTimeline": {},
   "incidentNotes": {},
   "remediationActions": {},
+  "remediations": {},
+  "aiAnalyses": {},
   "incidentCounter": 1001
 }

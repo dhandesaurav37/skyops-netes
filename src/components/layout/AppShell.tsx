@@ -110,17 +110,68 @@ export const AppShell: React.FC<AppShellProps> = ({
     setActiveTab('clusters');
   };
 
+  const handleClearIncident = () => {
+    setSelectedIncidentId(null);
+    try {
+      if (typeof window !== 'undefined') {
+        const url = new URL(window.location.href);
+        if (url.searchParams.has('incident') || url.searchParams.has('incidentId')) {
+          url.searchParams.delete('incident');
+          url.searchParams.delete('incidentId');
+          window.history.pushState({}, '', url.toString());
+        }
+      }
+    } catch {
+      // safe fallback
+    }
+  };
+
   const handleSelectIncident = (id: string) => {
     setSelectedIncidentId(id);
     setSelectedClusterId(null);
     setActiveTab('incidents');
+    try {
+      if (typeof window !== 'undefined') {
+        const url = new URL(window.location.href);
+        url.searchParams.set('incident', id);
+        window.history.pushState({ incidentId: id }, '', url.toString());
+      }
+    } catch {
+      // safe fallback
+    }
   };
 
   const handleTabChange = (tab: NavigationTab) => {
     setActiveTab(tab);
     setSelectedClusterId(null);
-    setSelectedIncidentId(null);
+    handleClearIncident();
   };
+
+  // Direct navigation support on initial mount and browser back/forward
+  useEffect(() => {
+    const resolveDirectIncidentRoute = () => {
+      try {
+        if (typeof window === 'undefined') return;
+        const searchParams = new URLSearchParams(window.location.search);
+        const queryInc = searchParams.get('incident') || searchParams.get('incidentId');
+        const pathMatch = window.location.pathname.match(/\/incidents\/([a-zA-Z0-9_-]+)/i);
+        const hashMatch = window.location.hash.match(/(?:#|\/)(SKY-\d+|incidents\/([a-zA-Z0-9_-]+))/i);
+
+        const targetId = queryInc || (pathMatch ? pathMatch[1] : null) || (hashMatch ? (hashMatch[2] || hashMatch[1]) : null);
+        if (targetId) {
+          setSelectedIncidentId(targetId);
+          setSelectedClusterId(null);
+          setActiveTab('incidents');
+        }
+      } catch {
+        // safe fallback
+      }
+    };
+
+    resolveDirectIncidentRoute();
+    window.addEventListener('popstate', resolveDirectIncidentRoute);
+    return () => window.removeEventListener('popstate', resolveDirectIncidentRoute);
+  }, []);
 
   const openIncidentsCount = incidents.filter(
     (i) => i.status === 'OPEN' || i.status === 'IN_PROGRESS' || i.status === 'ACKNOWLEDGED'
@@ -214,7 +265,7 @@ export const AppShell: React.FC<AppShellProps> = ({
               {selectedIncidentId ? (
                 <IncidentDetailView
                   incidentId={selectedIncidentId}
-                  onBack={() => setSelectedIncidentId(null)}
+                  onBack={handleClearIncident}
                   onSelectCluster={handleSelectCluster}
                 />
               ) : (

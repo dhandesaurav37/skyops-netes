@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { store } from './store';
+import { store, DataStore } from './store';
 import { KubernetesResource } from '../src/types/index';
 
 test('DataStore Multi-Tenant & Agent Lifecycle Suite', async (t) => {
@@ -356,5 +356,105 @@ test('DataStore Multi-Tenant & Agent Lifecycle Suite', async (t) => {
     assert.equal(active.length, 0, 'Complete snapshot must reconcile deleted resource');
     const resolved = store.getIncidents(org.id, { clusterId: cluster.id, status: 'RESOLVED' });
     assert.equal(resolved.length, 1);
+  });
+
+  await t.test('Incident retrieval flow: list to detail retrieval with sub-resources and case-insensitivity', async () => {
+    const store = new DataStore();
+    const org = store.createOrganization('Incident Detail Test Org', 'detail-test');
+    const { cluster } = store.createCluster(org.id, 'Production Cluster', 'gke');
+
+    const imagePullPod = {
+      id: 'res-nginx-1001',
+      clusterId: cluster.id,
+      kind: 'Pod',
+      name: 'nginx-ingress-pod',
+      namespace: 'production',
+      status: 'Pending',
+      health: 'CRITICAL',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      specSummary: {},
+      statusSummary: {},
+      containers: [
+        {
+          name: 'nginx',
+          image: 'nginx:nonexistent-tag',
+          restartCount: 0,
+          ready: false,
+          state: 'waiting',
+          waitingReason: 'ImagePullBackOff',
+          waitingMessage: 'Back-off pulling image nginx:nonexistent-tag'
+        }
+      ]
+    };
+
+    store.syncClusterResources(cluster.id, [imagePullPod as any]);
+
+    // 1. Verify Incidents list returns the incident
+    const incidents = store.getIncidents(org.id);
+    assert.equal(incidents.length, 1);
+    const incident = incidents[0];
+    assert.match(incident.id, /^SKY-\d+$/);
+    assert.equal(incident.resourceName, 'nginx-ingress-pod');
+
+    // 2. Verify Incident detail retrieval works by exact ID
+    const detail = store.getIncident(incident.id, org.id);
+    assert.ok(detail, 'Incident must be found by exact ID');
+    assert.equal(detail.id, incident.id);
+
+    // 3. Verify Case-insensitive lookup works
+    const lowerDetail = store.getIncident(incident.id.toLowerCase(), org.id);
+    assert.ok(lowerDetail, 'Incident must be found case-insensitively');
+    assert.equal(lowerDetail.id, incident.id);
+
+    // 4. Verify detail sub-resources execute cleanly without throwing
+    const timeline = store.getIncidentTimeline(incident.id, org.id);
+    assert.ok(Array.isArray(timeline));
+    assert.ok(timeline.length >= 1, 'Detection event should be in timeline');
+
+    const notes = store.getIncidentNotes(incident.id, org.id);
+    assert.ok(Array.isArray(notes));
+
+    const aiAnalysis = store.getAIAnalysis(incident.id);
+    assert.equal(aiAnalysis, null);
+
+    const remediation = store.getRemediation(incident.id, org.id);
+    assert.equal(remediation, null);
+
+    // 5. Verify tenant isolation for detail retrieval
+    const otherOrgDetail = store.getIncident(incident.id, 'org-foreign-tenant');
+    assert.equal(otherOrgDetail, null, 'Must not return incident for non-member tenant');
+  });
+
+  test('SkyOps agent launch does not create false positive DeploymentDegraded incidents', () => {
+    const store = new DataStore();
+    const org = store.createOrganization('Agent Launch Corp', 'agent-launch');
+    const { cluster } = store.createCluster(org.id, 'Prod EKS', 'eks');
+
+    // Simulate the incoming agent deployment reported right as the agent pods are initializing (0/1 ready)
+    const agentDeployment: KubernetesResource = {
+      id: `${cluster.id}-deployment-skyops-system-skyops-agent`,
+      clusterId: cluster.id,
+      kind: 'Deployment',
+      name: 'skyops-agent',
+      namespace: 'skyops-system',
+      status: '0/1 Ready',
+      health: 'WARNING',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      specSummary: { replicas: 1 },
+      statusSummary: { readyReplicas: 0, availableReplicas: 0, updatedReplicas: 1 },
+      conditions: [
+        { type: 'Available', status: 'False', reason: 'MinimumReplicasUnavailable' },
+        { type: 'Progressing', status: 'True', reason: 'ReplicaSetUpdated' }
+      ],
+      containers: []
+    };
+
+    store.syncClusterResources(cluster.id, [agentDeployment]);
+
+    // Verify zero incidents were created for the agent launch
+    const incidents = store.getIncidents(org.id);
+    assert.equal(incidents.length, 0, 'Agent launch must not create customer incident tickets');
   });
 });
