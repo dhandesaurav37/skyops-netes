@@ -671,15 +671,20 @@ export class DataStore {
             });
           }
         } else if (snapshotComplete) {
-          // A resource absent from an explicitly complete snapshot was deleted.
-          // Never infer deletion from a partial/failed scrape.
-          inc.status = 'RESOLVED';
-          inc.resolvedAt = Date.now();
-          inc.updatedAt = Date.now();
-          this.addTimelineEvent(inc.id, {
-            type: 'RECOVERY', actor: { type: 'AGENT', name: 'SkyOps Telemetry Engine' },
-            description: 'Auto-resolved: resource no longer exists in a complete Kubernetes snapshot'
-          });
+          const actions = [...this.remediationActions.values()].filter((a) => a.incidentId === inc.id);
+          const hasInFlightAction = actions.some((a) => a.status === 'PENDING' || a.status === 'DELIVERED');
+          if (!hasInFlightAction) {
+            // A resource absent from an explicitly complete snapshot was deleted.
+            // Never infer deletion from a partial/failed scrape.
+            inc.status = 'RESOLVED';
+            inc.resolvedAt = Date.now();
+            inc.updatedAt = Date.now();
+            this.addTimelineEvent(inc.id, {
+              type: 'RECOVERY',
+              actor: { type: 'AGENT', name: 'SkyOps Telemetry Engine' },
+              description: 'Auto-resolved: resource no longer exists in a complete Kubernetes snapshot'
+            });
+          }
         }
       }
     }
@@ -690,6 +695,13 @@ export class DataStore {
         rem.clusterId === clusterId &&
         (rem.status === 'DISPATCHED' || rem.status === 'EXECUTED' || rem.status === 'VERIFYING')
       ) {
+        const action = [...this.remediationActions.values()].find((a) => a.incidentId === rem.incidentId);
+        if (action?.status === 'FAILED') {
+          rem.status = 'FAILED';
+          rem.updatedAt = Date.now();
+          continue;
+        }
+
         const matchingResource = incomingResources.find(
           (r) =>
             r.kind.toLowerCase() === rem.targetResource.kind.toLowerCase() &&
@@ -697,7 +709,15 @@ export class DataStore {
             r.name.toLowerCase() === rem.targetResource.name.toLowerCase()
         );
 
-        if (matchingResource) {
+        // Verification strictly requires that the Agent has completed execution AND the incoming telemetry
+        // was observed after the action completion timestamp.
+        if (
+          matchingResource &&
+          action &&
+          action.status === 'SUCCEEDED' &&
+          action.completedAt &&
+          matchingResource.updatedAt > action.completedAt
+        ) {
           const containerStates =
             (matchingResource.statusSummary?.containerStates as Array<{
               name: string;
@@ -749,7 +769,7 @@ export class DataStore {
                 description: `Remediation verified: ${rem.targetResource.kind} ${rem.targetResource.name} container image patched to ${rem.parameters.proposedImage}. Workload is Running & Ready.`
               });
             }
-          } else if (rem.status === 'EXECUTED') {
+          } else {
             rem.status = 'VERIFYING';
             rem.updatedAt = Date.now();
             rem.verification = {
@@ -758,6 +778,14 @@ export class DataStore {
               observedState: `Workload observation pending: container state is currently ${targetContainer?.state || 'waiting'}`
             };
           }
+        } else if (rem.status === 'EXECUTED' || (action && action.status === 'SUCCEEDED')) {
+          rem.status = 'VERIFYING';
+          rem.updatedAt = Date.now();
+          rem.verification = {
+            status: 'PENDING',
+            checkCount: (rem.verification?.checkCount || 0) + 1,
+            observedState: 'Awaiting fresh telemetry observation after agent execution'
+          };
         }
       }
     }
@@ -821,24 +849,61 @@ export class DataStore {
       throw new Error(`Remediation is already in status ${rem.status}`);
     }
 
-    // Validate that action has valid parameters before dispatching
-    if (rem.actionType === 'UPDATE_CONTAINER_IMAGE' || rem.actionType === 'REVERT_TAG') {
-      const effectiveImage = (overrides?.proposedImage || rem.parameters.proposedImage || '').trim();
-      if (!effectiveImage || effectiveImage === 'unknown' || effectiveImage === 'N/A' || effectiveImage === rem.parameters.currentImage) {
-        throw new Error('Cannot approve remediation: No valid target container image specified');
-      }
+    // Automated execution is strictly constrained to supported Kubernetes mutation: ReplacePodImage
+    if (incident.resourceKind !== 'Pod') {
+      throw new Error(`Cannot execute automated remediation: Resource kind "${incident.resourceKind}" is not supported for automated mutation. Only Pods can be mutated safely.`);
+    }
+
+    if (rem.actionType !== 'UPDATE_CONTAINER_IMAGE' && rem.actionType !== 'REVERT_TAG') {
+      throw new Error(`Cannot execute automated remediation: Action type "${rem.actionType}" is not supported for automated agent execution.`);
+    }
+
+    const containerName = rem.parameters.containerName || incident.resourceName;
+    const effectiveImage = (overrides?.proposedImage !== undefined ? overrides.proposedImage : rem.parameters.proposedImage || '').trim();
+    if (!effectiveImage || effectiveImage === 'unknown' || effectiveImage === 'N/A') {
+      throw new Error('Cannot approve remediation: No valid target container image specified');
+    }
+
+    const observedContainer = (incident.technicalDetails?.containers || []).find((c) => c.name === containerName);
+    const expectedCurrentValue = observedContainer?.image || rem.parameters.currentImage || '';
+    if (!expectedCurrentValue || expectedCurrentValue === effectiveImage) {
+      throw new Error('Cannot approve remediation: Expected current image is invalid or identical to proposed value');
     }
 
     const cluster = this.clusters.get(incident.clusterId);
     const now = Date.now();
 
     // Apply any operator overrides (e.g. customized image tag)
-    if (overrides?.proposedImage && overrides.proposedImage.trim().length > 0) {
-      rem.parameters.proposedImage = overrides.proposedImage.trim();
-      if (rem.changePreview) {
-        rem.changePreview.proposedValue = overrides.proposedImage.trim();
-      }
+    rem.parameters.proposedImage = effectiveImage;
+    rem.parameters.currentImage = expectedCurrentValue;
+    rem.parameters.containerName = containerName;
+    if (rem.changePreview) {
+      rem.changePreview.proposedValue = effectiveImage;
+      rem.changePreview.currentValue = expectedCurrentValue;
+      rem.changePreview.container = containerName;
     }
+
+    // Register canonical RemediationAction for the SkyOps Agent to poll and execute
+    const action: RemediationAction = {
+      id: `act-${crypto.randomBytes(12).toString('hex')}`,
+      incidentId,
+      clusterId: incident.clusterId,
+      type: 'ReplacePodImage',
+      target: {
+        kind: 'Pod',
+        namespace: incident.namespace,
+        name: incident.resourceName,
+        container: containerName
+      },
+      fieldPath: `/spec/containers/${containerName}/image`,
+      expectedCurrentValue,
+      proposedValue: effectiveImage,
+      approvingUserId: approver.id,
+      approvingUserName: approver.name,
+      approvedAt: now,
+      status: 'PENDING'
+    };
+    this.remediationActions.set(action.id, action);
 
     rem.status = 'DISPATCHED';
     rem.orgId = orgId;
@@ -859,17 +924,23 @@ export class DataStore {
     rem.execution = {
       dispatchedAt: now,
       status: 'PENDING',
-      message: `Dispatched action ${rem.actionType} to cluster ${rem.clusterName}`
+      message: `Dispatched ReplacePodImage action to SkyOps Agent on cluster "${cluster?.name || incident.clusterName}"`
     };
 
-    this.addTimelineEvent(incidentId, {
-      type: 'STATE_CHANGE',
-      actor: { type: 'USER', id: approver.id, name: approver.name },
-      description: `AI Remediation Approved by ${approver.name}: Dispatched ${rem.actionType} (target image: ${rem.parameters.proposedImage}) to SkyOps Agent on cluster "${cluster?.name || incident.clusterName}".`
-    });
+    incident.status = 'IN_PROGRESS';
+    incident.updatedAt = now;
 
-    // Execute direct cluster patch to simulate in-cluster agent or immediate application
-    this.executeDirectClusterPatch(rem);
+    this.addTimelineEvent(incidentId, {
+      type: 'REMEDIATION_APPROVED',
+      actor: { type: 'USER', id: approver.id, name: approver.name },
+      description: `AI Remediation Approved by ${approver.name}: Dispatched ReplacePodImage (target image: ${effectiveImage}) to SkyOps Agent on cluster "${cluster?.name || incident.clusterName}".`,
+      metadata: {
+        actionId: action.id,
+        fieldPath: action.fieldPath,
+        before: action.expectedCurrentValue,
+        proposed: action.proposedValue
+      }
+    });
 
     this.saveSnapshot();
     return rem;
@@ -971,8 +1042,9 @@ export class DataStore {
   }
 
   /**
-   * Applies structured image patch directly to the cluster's in-memory resource state
-   * and dispatches immediate verification to guarantee a complete closed-loop cycle.
+   * @deprecated Test and development simulation only.
+   * Production remediation MUST execute through the canonical RemediationAction
+   * dispatched to the SkyOps Go Agent and verified from live Kubernetes telemetry.
    */
   public executeDirectClusterPatch(rem: StructuredRemediation): boolean {
     const clusterResources = this.resources.get(rem.clusterId);
@@ -1328,6 +1400,20 @@ export class DataStore {
     if (!inc) return null;
 
     if (updates.status && updates.status !== inc.status) {
+      if (updates.status === 'RESOLVED') {
+        const pendingOrUnverifiedActions = [...this.remediationActions.values()].filter(
+          (a) => a.incidentId === inc.id && (a.status === 'PENDING' || a.status === 'DELIVERED' || a.status === 'SUCCEEDED')
+        );
+        const rem = this.remediations.get(inc.id);
+        const hasActiveRemediation =
+          pendingOrUnverifiedActions.length > 0 ||
+          (rem && (rem.status === 'DISPATCHED' || rem.status === 'EXECUTED' || rem.status === 'VERIFYING'));
+
+        if (hasActiveRemediation) {
+          throw new Error('Remediation-backed incidents require authoritative telemetry verification before resolution');
+        }
+      }
+
       const oldStatus = inc.status;
       inc.status = updates.status;
       if (updates.status === 'RESOLVED' && !inc.resolvedAt) {
@@ -1415,37 +1501,137 @@ export class DataStore {
     if (approval.expectedCurrentValue === approval.proposedValue) throw new Error('Proposed image must differ from the current image');
     const observed = (incident.technicalDetails.containers || []).find(c => c.name === approval.container);
     if (!observed || observed.image !== approval.expectedCurrentValue) throw new Error('Expected current image does not match authoritative Agent telemetry');
+    const now = Date.now();
     const action: RemediationAction = {
-      id: `act-${crypto.randomBytes(12).toString('hex')}`, incidentId, clusterId: incident.clusterId,
-      type: 'ReplacePodImage', target: { kind: 'Pod', namespace: incident.namespace, name: incident.resourceName, container: approval.container },
-      fieldPath: `/spec/containers/${approval.container}/image`, expectedCurrentValue: approval.expectedCurrentValue,
-      proposedValue: approval.proposedValue, approvingUserId: user.id, approvingUserName: user.name,
-      approvedAt: Date.now(), status: 'PENDING'
+      id: `act-${crypto.randomBytes(12).toString('hex')}`,
+      incidentId,
+      clusterId: incident.clusterId,
+      type: 'ReplacePodImage',
+      target: { kind: 'Pod', namespace: incident.namespace, name: incident.resourceName, container: approval.container },
+      fieldPath: `/spec/containers/${approval.container}/image`,
+      expectedCurrentValue: approval.expectedCurrentValue,
+      proposedValue: approval.proposedValue,
+      approvingUserId: user.id,
+      approvingUserName: user.name,
+      approvedAt: now,
+      status: 'PENDING'
     };
     this.remediationActions.set(action.id, action);
-    incident.status = 'IN_PROGRESS'; incident.updatedAt = Date.now();
-    this.addTimelineEvent(incidentId, { type: 'REMEDIATION_APPROVED', actor: { type: 'USER', id: user.id, name: user.name }, description: `Approved ReplacePodImage for ${incident.namespace}/${incident.resourceName}:${approval.container}`, metadata: { actionId: action.id, fieldPath: action.fieldPath, before: action.expectedCurrentValue, proposed: action.proposedValue } });
+    incident.status = 'IN_PROGRESS';
+    incident.updatedAt = now;
+
+    // Keep any StructuredRemediation proposal in sync
+    const rem = this.remediations.get(incidentId);
+    if (rem) {
+      rem.status = 'DISPATCHED';
+      rem.updatedAt = now;
+      rem.parameters.containerName = approval.container;
+      rem.parameters.currentImage = approval.expectedCurrentValue;
+      rem.parameters.proposedImage = approval.proposedValue;
+      rem.approval = {
+        approvedBy: { userId: user.id, name: user.name, email: '' },
+        approvedAt: now
+      };
+      rem.execution = {
+        dispatchedAt: now,
+        status: 'PENDING',
+        message: `Dispatched ReplacePodImage action to SkyOps Agent on cluster "${incident.clusterName}".`
+      };
+    }
+
+    this.addTimelineEvent(incidentId, {
+      type: 'REMEDIATION_APPROVED',
+      actor: { type: 'USER', id: user.id, name: user.name },
+      description: `Approved ReplacePodImage for ${incident.namespace}/${incident.resourceName}:${approval.container}`,
+      metadata: { actionId: action.id, fieldPath: action.fieldPath, before: action.expectedCurrentValue, proposed: action.proposedValue }
+    });
     this.saveSnapshot();
     return action;
   }
 
   public claimPendingRemediationActions(clusterId: string): RemediationAction[] {
-    const actions = [...this.remediationActions.values()].filter(a => a.clusterId === clusterId && a.status === 'PENDING');
-    for (const action of actions) { action.status = 'DELIVERED'; action.deliveredAt = Date.now(); }
+    const CLAIM_RETRY_TIMEOUT_MS = 2 * 60 * 1000;
+    const now = Date.now();
+    const actions = [...this.remediationActions.values()].filter(
+      (a) =>
+        a.clusterId === clusterId &&
+        (a.status === 'PENDING' || (a.status === 'DELIVERED' && (!a.deliveredAt || now - a.deliveredAt > CLAIM_RETRY_TIMEOUT_MS)))
+    );
+    for (const action of actions) {
+      action.status = 'DELIVERED';
+      action.deliveredAt = now;
+    }
     if (actions.length) this.saveSnapshot();
     return actions;
   }
 
-  public recordRemediationResult(clusterId: string, actionId: string, result: { success: boolean; message: string }): RemediationAction | null {
+  public recordRemediationResult(
+    clusterId: string,
+    actionId: string,
+    result: { success: boolean; message: string }
+  ): RemediationAction | null {
     const action = this.remediationActions.get(actionId);
-    if (!action || action.clusterId !== clusterId || action.status !== 'DELIVERED') return null;
-    action.status = result.success ? 'SUCCEEDED' : 'FAILED'; action.completedAt = Date.now(); action.executionResult = result;
+    if (!action || action.clusterId !== clusterId) return null;
+
+    // Idempotent reporting: if already reported, return existing action
+    if (action.status === 'SUCCEEDED' || action.status === 'FAILED') {
+      return action;
+    }
+
+    if (action.status !== 'DELIVERED' && action.status !== 'PENDING') {
+      return null;
+    }
+
+    const now = Date.now();
+    action.status = result.success ? 'SUCCEEDED' : 'FAILED';
+    action.completedAt = now;
+    action.executionResult = result;
+
     const incident = this.incidents.get(action.incidentId);
     if (incident) {
-      incident.updatedAt = Date.now();
-      this.addTimelineEvent(incident.id, { type: 'REMEDIATION_EXECUTED', actor: { type: 'AGENT', name: 'SkyOps Agent' }, description: result.success ? 'Agent executed approved remediation; awaiting fresh telemetry verification' : `Agent rejected or failed remediation: ${result.message}`, metadata: { actionId, ...result } });
+      incident.updatedAt = now;
+      this.addTimelineEvent(incident.id, {
+        type: 'REMEDIATION_EXECUTED',
+        actor: { type: 'AGENT', name: 'SkyOps Agent' },
+        description: result.success
+          ? 'Agent executed approved remediation; awaiting fresh telemetry verification'
+          : `Agent rejected or failed remediation: ${result.message}`,
+        metadata: { actionId, ...result }
+      });
     }
-    this.saveSnapshot(); return action;
+
+    // Keep StructuredRemediation in sync
+    const rem = this.remediations.get(action.incidentId);
+    if (rem) {
+      rem.updatedAt = now;
+      if (result.success) {
+        rem.status = 'EXECUTED';
+        rem.execution = {
+          dispatchedAt: action.approvedAt,
+          executedAt: now,
+          agentVersion: AGENT_VERSION,
+          status: 'SUCCESS',
+          message: result.message
+        };
+        rem.verification = {
+          status: 'PENDING',
+          checkCount: 0,
+          observedState: 'Awaiting fresh telemetry from Kubernetes cluster'
+        };
+      } else {
+        rem.status = 'FAILED';
+        rem.execution = {
+          dispatchedAt: action.approvedAt,
+          executedAt: now,
+          agentVersion: AGENT_VERSION,
+          status: 'FAILED',
+          message: result.message
+        };
+      }
+    }
+
+    this.saveSnapshot();
+    return action;
   }
 
   public addIncidentNote(

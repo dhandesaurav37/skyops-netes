@@ -749,13 +749,29 @@ app.get('/api/v1/agent/actions', requireAgentAuth, (req: AuthenticatedAgentReque
   res.json({ actions: store.claimPendingRemediationActions(req.clusterId!) });
 });
 
-const ActionResultSchema = z.object({ actionId: z.string().min(1), success: z.boolean(), message: z.string().min(1).max(4096) });
-app.post('/api/v1/agent/actions/:id/result', requireAgentAuth, (req: AuthenticatedAgentRequest, res) => {
-  const parsed = ActionResultSchema.safeParse({ ...req.body, actionId: req.params.id });
-  if (!parsed.success) return res.status(400).json({ error: 'Invalid action result' });
-  const action = store.recordRemediationResult(req.clusterId!, parsed.data.actionId, parsed.data);
-  if (!action) return res.status(404).json({ error: 'Action not found or is not deliverable' });
-  res.json({ action });
+const ActionResultSchema = z.object({
+  actionId: z.string().min(1).optional(),
+  success: z.boolean(),
+  message: z.string().min(1).max(4096)
+});
+
+app.post('/api/v1/agent/actions/:actionId/result', requireAgentAuth, (req: AuthenticatedAgentRequest, res) => {
+  const parsed = ActionResultSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid action result' });
+  }
+
+  const actionId = req.params.actionId || parsed.data.actionId;
+  if (!actionId) {
+    return res.status(400).json({ error: 'Action ID is required' });
+  }
+
+  const action = store.recordRemediationResult(req.clusterId!, actionId, parsed.data);
+  if (!action) {
+    return res.status(404).json({ error: 'Action not found or is not deliverable' });
+  }
+
+  res.json({ status: 'ACK', success: true, action });
 });
 
 // --- Incidents Management ---
@@ -925,43 +941,6 @@ app.post(
   }
 );
 
-// --- Agent Command Dispatch & Execution Reporting ---
-app.get('/api/v1/agent/actions', requireAgentAuth, (req: AuthenticatedAgentRequest, res) => {
-  const actions = store.getPendingAgentActions(req.clusterId!);
-  res.json({
-    status: 'OK',
-    clusterId: req.clusterId,
-    timestamp: Date.now(),
-    actions
-  });
-});
-
-const AgentActionResultSchema = z.object({
-  status: z.enum(['SUCCESS', 'FAILED']),
-  message: z.string().max(1000).optional(),
-  appliedChanges: z.record(z.string(), z.unknown()).optional(),
-  agentVersion: z.string().optional()
-});
-
-app.post('/api/v1/agent/actions/:actionId/result', requireAgentAuth, (req: AuthenticatedAgentRequest, res) => {
-  const parsed = AgentActionResultSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid action result payload' });
-  }
-
-  try {
-    const remediation = store.recordAgentActionResult(req.clusterId!, req.params.actionId, parsed.data);
-    res.json({
-      status: 'ACK',
-      clusterId: req.clusterId,
-      remediationId: remediation.id,
-      remediationStatus: remediation.status
-    });
-  } catch (err: any) {
-    console.error(`[SkyOps Agent Action Result Error] clusterId=${req.clusterId}:`, err);
-    res.status(400).json({ error: err?.message || 'Failed to record action result' });
-  }
-});
 
 const UpdateIncidentSchema = z.object({
   status: z.enum(['OPEN', 'ACKNOWLEDGED', 'IN_PROGRESS', 'RESOLVED', 'CLOSED']).optional(),

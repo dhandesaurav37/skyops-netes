@@ -9,6 +9,9 @@ rules:
   - apiGroups: [""]
     resources:
       - pods
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources:
       - pods/status
       - nodes
       - nodes/status
@@ -18,7 +21,7 @@ rules:
       - persistentvolumes
       - configmaps
       - events
-    verbs: ["get", "list", "watch", "create", "delete"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: ["apps"]
     resources:
       - deployments

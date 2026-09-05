@@ -52,8 +52,12 @@ export function generateKubernetesManifest(config: ManifestConfig): string {
       rules: [
         {
           apiGroups: [''],
+          resources: ['pods'],
+          verbs: ['get', 'list', 'watch', 'create', 'delete'],
+        },
+        {
+          apiGroups: [''],
           resources: [
-            'pods',
             'pods/status',
             'nodes',
             'nodes/status',
