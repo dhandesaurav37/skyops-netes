@@ -664,25 +664,45 @@ export class DataStore {
             inc.status = 'RESOLVED';
             inc.resolvedAt = Date.now();
             inc.updatedAt = Date.now();
+            inc.resolutionSource = 'AUTOMATIC_VERIFIED';
+            inc.resolution = {
+              source: 'AUTOMATIC_VERIFIED',
+              resolvedAt: inc.resolvedAt,
+              reason: recovery.reason,
+              verificationDetails: 'Authoritative telemetry verified healthy workload state'
+            };
             this.addTimelineEvent(inc.id, {
               type: 'RECOVERY',
               actor: { type: 'AGENT', name: 'SkyOps Telemetry Engine' },
-              description: `Auto-resolved: ${recovery.reason}`
+              description: `Auto-resolved: ${recovery.reason}`,
+              metadata: { resolutionSource: 'AUTOMATIC_VERIFIED' }
             });
           }
         } else if (snapshotComplete) {
           const actions = [...this.remediationActions.values()].filter((a) => a.incidentId === inc.id);
           const hasInFlightAction = actions.some((a) => a.status === 'PENDING' || a.status === 'DELIVERED');
-          if (!hasInFlightAction) {
-            // A resource absent from an explicitly complete snapshot was deleted.
-            // Never infer deletion from a partial/failed scrape.
+          const isControllerOwnedPod =
+            inc.resourceKind === 'Pod' &&
+            Array.isArray((inc.technicalDetails as any)?.ownerReferences) &&
+            (inc.technicalDetails as any).ownerReferences.length > 0;
+          if (!hasInFlightAction && !isControllerOwnedPod) {
+            // A standalone resource absent from an explicitly complete snapshot was deleted.
+            // Never infer deletion from a partial/failed scrape, and do not resolve controller-managed pods simply because failing pod was terminated.
             inc.status = 'RESOLVED';
             inc.resolvedAt = Date.now();
             inc.updatedAt = Date.now();
+            inc.resolutionSource = 'AUTOMATIC_VERIFIED';
+            inc.resolution = {
+              source: 'AUTOMATIC_VERIFIED',
+              resolvedAt: inc.resolvedAt,
+              reason: 'Resource no longer exists in a complete Kubernetes snapshot',
+              verificationDetails: 'Confirmed absent from complete cluster telemetry snapshot'
+            };
             this.addTimelineEvent(inc.id, {
               type: 'RECOVERY',
               actor: { type: 'AGENT', name: 'SkyOps Telemetry Engine' },
-              description: 'Auto-resolved: resource no longer exists in a complete Kubernetes snapshot'
+              description: 'Auto-resolved: resource no longer exists in a complete Kubernetes snapshot',
+              metadata: { resolutionSource: 'AUTOMATIC_VERIFIED' }
             });
           }
         }
@@ -757,16 +777,24 @@ export class DataStore {
               checkCount: (rem.verification?.checkCount || 0) + 1
             };
 
-            // Automatically resolve the associated incident
+            // Automatically resolve the associated incident with explicit AUTOMATIC_VERIFIED provenance
             const inc = this.incidents.get(rem.incidentId);
             if (inc && (inc.status === 'OPEN' || inc.status === 'IN_PROGRESS' || inc.status === 'ACKNOWLEDGED')) {
               inc.status = 'RESOLVED';
               inc.resolvedAt = Date.now();
               inc.updatedAt = Date.now();
+              inc.resolutionSource = 'AUTOMATIC_VERIFIED';
+              inc.resolution = {
+                source: 'AUTOMATIC_VERIFIED',
+                resolvedAt: inc.resolvedAt,
+                reason: `Remediation verified: ${rem.targetResource.kind} ${rem.targetResource.name} container image patched to ${rem.parameters.proposedImage}. Workload is Running & Ready.`,
+                verificationDetails: 'Observed healthy Running/Ready state from live cluster telemetry after agent execution.'
+              };
               this.addTimelineEvent(inc.id, {
                 type: 'RECOVERY',
                 actor: { type: 'AGENT', name: 'SkyOps Verification Engine' },
-                description: `Remediation verified: ${rem.targetResource.kind} ${rem.targetResource.name} container image patched to ${rem.parameters.proposedImage}. Workload is Running & Ready.`
+                description: `Remediation verified: ${rem.targetResource.kind} ${rem.targetResource.name} container image patched to ${rem.parameters.proposedImage}. Workload is Running & Ready.`,
+                metadata: { resolutionSource: 'AUTOMATIC_VERIFIED', actionId: action.id }
               });
             }
           } else {
@@ -849,9 +877,33 @@ export class DataStore {
       throw new Error(`Remediation is already in status ${rem.status}`);
     }
 
+    if (rem.isExecutable === false) {
+      throw new Error(rem.unexecutableReason || 'Remediation proposal is marked as non-executable. Review recommended manual inspection steps.');
+    }
+
     // Automated execution is strictly constrained to supported Kubernetes mutation: ReplacePodImage
     if (incident.resourceKind !== 'Pod') {
       throw new Error(`Cannot execute automated remediation: Resource kind "${incident.resourceKind}" is not supported for automated mutation. Only Pods can be mutated safely.`);
+    }
+
+    // Strictly forbid automated mutations on controller-managed Pods
+    const clusterRes = this.resources.get(incident.clusterId) || [];
+    const targetRes = clusterRes.find(
+      (r) =>
+        r.kind.toLowerCase() === 'pod' &&
+        (r.namespace || 'default').toLowerCase() === incident.namespace.toLowerCase() &&
+        r.name.toLowerCase() === incident.resourceName.toLowerCase()
+    );
+    const ownerRefs =
+      (targetRes?.ownerReferences && targetRes.ownerReferences.length > 0)
+        ? targetRes.ownerReferences
+        : (Array.isArray((incident.technicalDetails as any)?.ownerReferences) && (incident.technicalDetails as any).ownerReferences.length > 0)
+        ? (incident.technicalDetails as any).ownerReferences
+        : [];
+
+    if (ownerRefs.length > 0) {
+      const ownerList = ownerRefs.map((o: any) => o.kind || 'Controller').join(', ');
+      throw new Error(`Cannot execute automated remediation: Pod "${incident.resourceName}" is managed by controller (${ownerList}). In-cluster agent strictly refuses to mutate controller-managed pods directly. Update the parent controller manifest instead.`);
     }
 
     if (rem.actionType !== 'UPDATE_CONTAINER_IMAGE' && rem.actionType !== 'REVERT_TAG') {
@@ -862,6 +914,15 @@ export class DataStore {
     const effectiveImage = (overrides?.proposedImage !== undefined ? overrides.proposedImage : rem.parameters.proposedImage || '').trim();
     if (!effectiveImage || effectiveImage === 'unknown' || effectiveImage === 'N/A') {
       throw new Error('Cannot approve remediation: No valid target container image specified');
+    }
+
+    // Enforce grounding: generic tags are blocked unless explicitly grounded in telemetry context
+    const genericTags = [':latest', ':previous', ':stable', ':fixed', ':prod', ':v1', ':test', ':tag', ':some-tag'];
+    if (!overrides?.proposedImage && genericTags.some((gt) => effectiveImage.toLowerCase().endsWith(gt))) {
+      const contextText = JSON.stringify(incident.technicalDetails || {}).toLowerCase();
+      if (!contextText.includes(effectiveImage.toLowerCase())) {
+        throw new Error(`Cannot execute automated remediation: Proposed image tag "${effectiveImage}" is not grounded in cluster telemetry. Please specify an exact verified replacement image tag.`);
+      }
     }
 
     const observedContainer = (incident.technicalDetails?.containers || []).find((c) => c.name === containerName);
@@ -1041,83 +1102,6 @@ export class DataStore {
     return rem;
   }
 
-  /**
-   * @deprecated Test and development simulation only.
-   * Production remediation MUST execute through the canonical RemediationAction
-   * dispatched to the SkyOps Go Agent and verified from live Kubernetes telemetry.
-   */
-  public executeDirectClusterPatch(rem: StructuredRemediation): boolean {
-    const clusterResources = this.resources.get(rem.clusterId);
-    if (!clusterResources) return false;
-
-    const resource = clusterResources.find(
-      (r) =>
-        r.kind.toLowerCase() === rem.targetResource.kind.toLowerCase() &&
-        (r.namespace || 'default').toLowerCase() === rem.targetResource.namespace.toLowerCase() &&
-        r.name.toLowerCase() === rem.targetResource.name.toLowerCase()
-    );
-
-    if (!resource) return false;
-
-    // Patch container image in spec and status
-    const newImage = rem.parameters.proposedImage;
-    if (rem.actionType === 'UPDATE_CONTAINER_IMAGE' || rem.actionType === 'REVERT_TAG') {
-      const containerName = rem.parameters.containerName;
-
-      // Update specSummary
-      if (resource.specSummary && typeof resource.specSummary === 'object') {
-        const containers = resource.specSummary.containers as Array<{ name: string; image: string }> | undefined;
-        if (Array.isArray(containers)) {
-          const c = containers.find((item) => item.name === containerName) || containers[0];
-          if (c) c.image = newImage;
-        }
-      }
-
-      // Update statusSummary: Transition from ImagePullBackOff to Running & Ready
-      if (resource.statusSummary && typeof resource.statusSummary === 'object') {
-        const containerStates = resource.statusSummary.containerStates as Array<{
-          name: string;
-          state: string;
-          ready: boolean;
-          image?: string;
-          waiting?: { reason: string; message?: string };
-        }> | undefined;
-
-        if (Array.isArray(containerStates)) {
-          const cs = containerStates.find((item) => item.name === containerName) || containerStates[0];
-          if (cs) {
-            cs.image = newImage;
-            cs.state = 'running';
-            cs.ready = true;
-            delete cs.waiting;
-          }
-        }
-        resource.statusSummary.observedState = 'Running';
-      }
-
-      resource.status = 'Running';
-      resource.health = 'HEALTHY';
-      resource.updatedAt = Date.now();
-
-      // Record successful agent execution
-      rem.status = 'EXECUTED';
-      rem.execution = {
-        dispatchedAt: Date.now() - 1000,
-        executedAt: Date.now(),
-        agentVersion: AGENT_VERSION,
-        status: 'SUCCESS',
-        message: `Applied Strategic Merge Patch: updated container ${containerName} image to ${newImage}`,
-        appliedChanges: { container: containerName, image: newImage }
-      };
-
-      // Trigger telemetry sync to run closed-loop verification and auto-resolve
-      this.syncClusterResources(rem.clusterId, clusterResources);
-      return true;
-    }
-
-    return false;
-  }
-
   public deleteIncident(incidentId: string, orgId: string): boolean {
     const inc = this.incidents.get(incidentId);
     if (!inc || inc.orgId !== orgId) return false;
@@ -1288,11 +1272,19 @@ export class DataStore {
         activeInc.status = 'RESOLVED';
         activeInc.resolvedAt = Date.now();
         activeInc.updatedAt = Date.now();
+        activeInc.resolutionSource = 'AUTOMATIC_VERIFIED';
+        activeInc.resolution = {
+          source: 'AUTOMATIC_VERIFIED',
+          resolvedAt: activeInc.resolvedAt,
+          reason: recovery.reason,
+          verificationDetails: 'Authoritative telemetry verified healthy workload state'
+        };
 
         this.addTimelineEvent(activeInc.id, {
           type: 'RECOVERY',
           actor: { type: 'AGENT', name: 'SkyOps Agent' },
-          description: `Automatic recovery detected: ${recovery.reason}`
+          description: `Automatic recovery detected: ${recovery.reason}`,
+          metadata: { resolutionSource: 'AUTOMATIC_VERIFIED' }
         });
 
         this.updateClusterIncidentCount(clusterId);
@@ -1392,6 +1384,7 @@ export class DataStore {
       status?: IncidentStatus;
       severity?: IncidentSeverity;
       title?: string;
+      resolutionReason?: string;
       assignee?: { userId: string; name: string; email: string };
     },
     userActor: { id: string; name: string }
@@ -1412,6 +1405,17 @@ export class DataStore {
         if (hasActiveRemediation) {
           throw new Error('Remediation-backed incidents require authoritative telemetry verification before resolution');
         }
+
+        inc.resolutionSource = 'MANUAL';
+        inc.resolution = {
+          source: 'MANUAL',
+          resolvedAt: Date.now(),
+          resolvedBy: { id: userActor.id, name: userActor.name },
+          reason: updates.resolutionReason || 'Manual resolution by operator'
+        };
+      } else if (updates.status !== 'CLOSED') {
+        inc.resolutionSource = undefined;
+        inc.resolution = undefined;
       }
 
       const oldStatus = inc.status;
@@ -1421,10 +1425,20 @@ export class DataStore {
       } else if (updates.status !== 'RESOLVED' && updates.status !== 'CLOSED') {
         inc.resolvedAt = null;
       }
+
+      const desc =
+        updates.status === 'RESOLVED'
+          ? `Status changed to RESOLVED by ${userActor.name} (Manual resolution${updates.resolutionReason ? ': ' + updates.resolutionReason : ''})`
+          : `Status changed from ${oldStatus} to ${updates.status}`;
+
       this.addTimelineEvent(incidentId, {
         type: 'STATE_CHANGE',
         actor: { type: 'USER', id: userActor.id, name: userActor.name },
-        description: `Status changed from ${oldStatus} to ${updates.status}`
+        description: desc,
+        metadata:
+          updates.status === 'RESOLVED'
+            ? { resolutionSource: 'MANUAL', reason: updates.resolutionReason || 'Manual operator resolution' }
+            : undefined
       });
       this.updateClusterIncidentCount(inc.clusterId);
     }

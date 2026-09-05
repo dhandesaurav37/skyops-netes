@@ -194,6 +194,18 @@ export interface Incident {
   };
   updatedAt: number;
   aiAnalysis?: SkyOpsAIAnalysis;
+  resolutionSource?: 'MANUAL' | 'AUTOMATIC_VERIFIED';
+  resolution?: {
+    source: 'MANUAL' | 'AUTOMATIC_VERIFIED';
+    resolvedAt: number;
+    resolvedBy?: {
+      id: string;
+      name: string;
+      email?: string;
+    };
+    reason?: string;
+    verificationDetails?: string;
+  };
 }
 
 /** A human-approved, deterministic mutation which an Agent may execute. */
@@ -442,6 +454,8 @@ export interface StructuredRemediation {
     proposedImage: string;
     [key: string]: unknown;
   };
+  isExecutable?: boolean;
+  unexecutableReason?: string;
   changePreview?: AIChangePreview;
   verificationCriteria?: AIVerificationCriteria;
   reasoning: {

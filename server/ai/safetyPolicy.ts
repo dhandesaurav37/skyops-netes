@@ -260,6 +260,11 @@ export class SafetyPolicyEngine {
     const targetName = safeAffected[0].name;
     const effectiveIncId = incidentId || rawSafe.incidentId || 'SKY-0000';
 
+    const isTargetPod = targetKind.toLowerCase() === 'pod';
+    const ownerRefs = context?.ownerReferences || [];
+    const isControllerOwned = ownerRefs.length > 0;
+    const isStandalonePod = isTargetPod && !isControllerOwned;
+
     if (!isProviderFailure && confidence >= 0.6 && rawRemediation) {
       const containerName = String(
         rawRemediation?.parameters?.containerName ||
@@ -286,57 +291,166 @@ export class SafetyPolicyEngine {
         !rawProposed.includes(' ') &&
         (rawProposed.includes(':') || rawProposed.includes('/') || /^[a-z0-9_.-]+$/i.test(rawProposed));
 
-      if (actionType === 'UPDATE_CONTAINER_IMAGE' || actionType === 'REVERT_TAG') {
-        if (isValidImageString && currentImage && currentImage !== 'unknown') {
-          // If changePreview wasn't provided directly, derive it deterministically
-          if (!changePreview) {
-            changePreview = {
-              resource: targetKind,
-              namespace: targetNs,
-              object: targetName,
-              container: containerName,
-              field: `spec.template.spec.containers[name=${containerName}].image`,
-              currentValue: currentImage,
-              proposedValue: rawProposed
-            };
-          }
+      // Grounding check: prevent inventing ungrounded generic tags
+      const genericTags = [':latest', ':previous', ':stable', ':fixed', ':prod', ':v1', ':test', ':tag', ':some-tag'];
+      const hasGenericTag = genericTags.some((gt) => rawProposed.toLowerCase().endsWith(gt));
+      const contextDump = JSON.stringify({
+        events: context?.recentEvents,
+        containers: context?.containers,
+        spec: context?.specSummary,
+        status: context?.statusSummary,
+        notes: context?.additionalNotes,
+        evidence: rawSafe.evidence
+      }).toLowerCase();
+      const isGroundedInEvidence = !hasGenericTag || contextDump.includes(rawProposed.toLowerCase());
 
-          structuredRemediation = {
-            id: `REM-${effectiveIncId}-1`,
-            incidentId: effectiveIncId,
-            orgId: context?.orgId || 'org-default',
-            clusterId: context?.clusterId || 'cluster-default',
-            clusterName: context?.clusterName || 'Kubernetes Cluster',
-            status: 'PROPOSED',
-            actionType,
-            targetResource: {
-              kind: targetKind,
-              namespace: targetNs,
-              name: targetName
-            },
-            parameters: {
-              containerName,
-              currentImage,
-              proposedImage: rawProposed
-            },
-            changePreview,
-            verificationCriteria,
-            reasoning: {
-              summary: rawSafe.summary || `Remediation proposed for ${effectiveIncId}`,
-              rootCause: rawSafe.rootCause || 'Underlying root cause determined from telemetry',
-              whyRecommended: rawSafe.recommendedFix?.reason || 'Addresses the failure condition safely with minimal operational risk.',
-              risk: assessedRisk,
-              riskExplanation: rawSafe.riskExplanation || `Assessed as ${assessedRisk} risk. Change replaces failing image reference with valid tag.`,
-              expectedImpact: rawSafe.recommendedFix?.expectedImpact || rawSafe.expectedImpact || 'Restores healthy workload status with a rolling pod replacement.',
-              rollbackStrategy: rawSafe.recommendedFix?.rollback || rawSafe.rollback || `Revert container ${containerName} image to ${currentImage || 'prior version'}.`,
-              saferAlternative: rawSafe.saferAlternative?.description,
-              confidence: Number(confidence.toFixed(2)),
-              confidenceExplanation: rawSafe.confidenceExplanation || 'Correlated live Kubernetes event streams and container waiting reasons.'
-            },
-            createdAt: Date.now(),
-            updatedAt: Date.now()
+      const canExecuteAutomated =
+        isStandalonePod &&
+        (actionType === 'UPDATE_CONTAINER_IMAGE' || actionType === 'REVERT_TAG') &&
+        isValidImageString &&
+        isGroundedInEvidence &&
+        currentImage &&
+        currentImage !== 'unknown';
+
+      let unexecutableReason: string | undefined = undefined;
+      if (!canExecuteAutomated) {
+        if (!isTargetPod) {
+          unexecutableReason = `Automated in-cluster mutation is strictly restricted to standalone Pods. Resource kind "${targetKind}" requires declarative configuration updates in version control or manifests.`;
+        } else if (isControllerOwned) {
+          const controllerTypes = ownerRefs.map((o) => o.kind).join(', ') || 'Controller';
+          unexecutableReason = `Automated mutation is restricted to standalone Pods. Target Pod is managed by controller (${controllerTypes}); update the parent controller manifest instead.`;
+        } else if (!isValidImageString || !isGroundedInEvidence) {
+          unexecutableReason = `A verified replacement image tag could not be grounded with certainty from cluster telemetry. Automated execution requires a verified image tag.`;
+        } else if (!currentImage || currentImage === 'unknown') {
+          unexecutableReason = `Authoritative current container image could not be verified from live cluster telemetry.`;
+        } else {
+          unexecutableReason = `Remediation action type "${actionType}" requires manual execution or operator verification.`;
+        }
+      }
+
+      if (canExecuteAutomated) {
+        // If changePreview wasn't provided directly, derive it deterministically
+        if (!changePreview) {
+          changePreview = {
+            resource: targetKind,
+            namespace: targetNs,
+            object: targetName,
+            container: containerName,
+            field: `spec.template.spec.containers[name=${containerName}].image`,
+            currentValue: currentImage,
+            proposedValue: rawProposed
           };
         }
+
+        structuredRemediation = {
+          id: `REM-${effectiveIncId}-1`,
+          incidentId: effectiveIncId,
+          orgId: context?.orgId || 'org-default',
+          clusterId: context?.clusterId || 'cluster-default',
+          clusterName: context?.clusterName || 'Kubernetes Cluster',
+          status: 'PROPOSED',
+          actionType,
+          targetResource: {
+            kind: targetKind,
+            namespace: targetNs,
+            name: targetName
+          },
+          parameters: {
+            containerName,
+            currentImage,
+            proposedImage: rawProposed
+          },
+          isExecutable: true,
+          changePreview,
+          verificationCriteria,
+          reasoning: {
+            summary: rawSafe.summary || `Remediation proposed for ${effectiveIncId}`,
+            rootCause: rawSafe.rootCause || 'Underlying root cause determined from telemetry',
+            whyRecommended: rawSafe.recommendedFix?.reason || 'Addresses the failure condition safely with minimal operational risk.',
+            risk: assessedRisk,
+            riskExplanation: rawSafe.riskExplanation || `Assessed as ${assessedRisk} risk. Change replaces failing image reference with valid tag.`,
+            expectedImpact: rawSafe.recommendedFix?.expectedImpact || rawSafe.expectedImpact || 'Restores healthy workload status with a rolling pod replacement.',
+            rollbackStrategy: `Re-apply previous container image: ${currentImage}`,
+            saferAlternative: rawSafe.saferAlternative?.description,
+            confidence: Number(confidence.toFixed(2)),
+            confidenceExplanation: rawSafe.confidenceExplanation || 'Correlated live Kubernetes event streams and container waiting reasons.'
+          },
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        };
+      } else {
+        // Non-executable structured proposal for manual operator guidance
+        structuredRemediation = {
+          id: `REM-${effectiveIncId}-1`,
+          incidentId: effectiveIncId,
+          orgId: context?.orgId || 'org-default',
+          clusterId: context?.clusterId || 'cluster-default',
+          clusterName: context?.clusterName || 'Kubernetes Cluster',
+          status: 'PROPOSED',
+          actionType: 'MANUAL_INSPECTION',
+          targetResource: {
+            kind: targetKind,
+            namespace: targetNs,
+            name: targetName
+          },
+          parameters: {
+            containerName,
+            currentImage: currentImage || 'unknown',
+            proposedImage: isValidImageString && isGroundedInEvidence ? rawProposed : ''
+          },
+          isExecutable: false,
+          unexecutableReason,
+          verificationCriteria,
+          reasoning: {
+            summary: rawSafe.summary || `Remediation analysis for ${effectiveIncId}`,
+            rootCause: rawSafe.rootCause || 'Root cause identified from cluster telemetry',
+            whyRecommended: isControllerOwned
+              ? `Workload is managed by ${ownerRefs[0]?.kind || 'controller'}; declarative manifest update required.`
+              : !isTargetPod
+              ? `Resource kind "${targetKind}" requires declarative manifest update.`
+              : 'Manual inspection required to verify image and configuration.',
+            risk: assessedRisk,
+            riskExplanation: rawSafe.riskExplanation || `Assessed as ${assessedRisk} risk. Manual procedure recommended.`,
+            expectedImpact: 'No automated cluster mutation executed.',
+            rollbackStrategy: isControllerOwned || !isTargetPod
+              ? (targetKind === 'Deployment' || targetKind === 'StatefulSet' || targetKind === 'DaemonSet'
+                ? `kubectl rollout undo ${targetKind.toLowerCase()}/${targetName} -n ${targetNs}`
+                : 'Revert declarative manifest changes in version control.')
+              : 'No automated changes applied; no rollback required.',
+            saferAlternative: rawSafe.saferAlternative?.description,
+            confidence: Number(confidence.toFixed(2)),
+            confidenceExplanation: rawSafe.confidenceExplanation
+          },
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        };
+      }
+    }
+
+    // Determine accurate rollback description based on actual remediation scope
+    let accurateRollback: string;
+    if (structuredRemediation && structuredRemediation.isExecutable) {
+      const prevImage = structuredRemediation.parameters.currentImage || 'prior image';
+      accurateRollback = `Re-apply previous container image: ${prevImage}`;
+    } else if (targetKind.toLowerCase() === 'deployment' || targetKind.toLowerCase() === 'statefulset' || targetKind.toLowerCase() === 'daemonset') {
+      accurateRollback = `kubectl rollout undo ${targetKind.toLowerCase()}/${targetName} -n ${targetNs}`;
+    } else if (isControllerOwned) {
+      const owningKind = ownerRefs[0]?.kind || 'Deployment';
+      const owningName = ownerRefs[0]?.name || targetName;
+      accurateRollback = `kubectl rollout undo ${owningKind.toLowerCase()}/${owningName} -n ${targetNs}`;
+    } else {
+      accurateRollback = 'No automated cluster mutation was applied; no rollback required.';
+    }
+
+    // Recommended fix description
+    let recommendedDescription = rawSafe.recommendedFix?.description || 'Review the failing workload configuration and resolve observed resource discrepancies.';
+    if (structuredRemediation && !structuredRemediation.isExecutable) {
+      if (isControllerOwned) {
+        recommendedDescription = `Update the container image in the owning ${ownerRefs[0]?.kind || 'controller'} manifest (${ownerRefs[0]?.name || targetName}) and allow the controller to roll out healthy pods.`;
+      } else if (!isTargetPod) {
+        recommendedDescription = `Review and update the ${targetKind} configuration in version control or manifests.`;
+      } else if (!structuredRemediation.parameters.proposedImage) {
+        recommendedDescription = `Inspect container image repository and specify a verified replacement image tag.`;
       }
     }
 
@@ -349,11 +463,13 @@ export class SafetyPolicyEngine {
       evidence: safeEvidence,
       affectedResources: safeAffected,
       recommendedFix: {
-        description: rawSafe.recommendedFix?.description || 'Review the failing workload configuration and resolve observed resource discrepancies.',
+        description: recommendedDescription,
         reason: rawSafe.recommendedFix?.reason || 'Addresses the direct cause of the pod/workload failure.',
         risk: assessedRisk,
-        expectedImpact: rawSafe.recommendedFix?.expectedImpact || rawSafe.expectedImpact || 'Restores normal workload pod readiness without service interruption.',
-        rollback: rawSafe.recommendedFix?.rollback || rawSafe.rollback || 'Revert recent manifest edits or restore prior workload image/configuration tag.',
+        expectedImpact: structuredRemediation?.isExecutable
+          ? (rawSafe.recommendedFix?.expectedImpact || rawSafe.expectedImpact || 'Restores normal workload pod readiness without service interruption.')
+          : 'Manual inspection and declarative manifest update.',
+        rollback: accurateRollback,
         action: structuredRemediation
           ? {
               type: structuredRemediation.actionType,
@@ -368,10 +484,12 @@ export class SafetyPolicyEngine {
             }
           : undefined
       },
-      changePreview,
-      expectedImpact: rawSafe.expectedImpact || rawSafe.recommendedFix?.expectedImpact || 'Rolling update of affected workload pod replicas without downtime.',
+      changePreview: structuredRemediation?.isExecutable ? changePreview : undefined,
+      expectedImpact: structuredRemediation?.isExecutable
+        ? (rawSafe.expectedImpact || rawSafe.recommendedFix?.expectedImpact || 'Rolling update of affected workload pod replicas without downtime.')
+        : 'Manual configuration update; no automated cluster impact.',
       riskExplanation: rawSafe.riskExplanation || `Risk classified as ${assessedRisk} based on operational impact.`,
-      rollback: rawSafe.rollback || rawSafe.recommendedFix?.rollback || `kubectl rollout undo ${targetKind.toLowerCase()}/${targetName} -n ${targetNs}`,
+      rollback: accurateRollback,
       verificationCriteria,
       saferAlternative: {
         description: rawSafe.saferAlternative?.description || 'Apply declarative configuration updates to the parent Deployment/StatefulSet rather than imperatively modifying running Pods.',

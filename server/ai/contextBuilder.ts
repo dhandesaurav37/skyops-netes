@@ -250,8 +250,12 @@ export function buildIncidentContext(
   const statusSummary = sanitizeObject(associatedResource?.statusSummary || {});
 
   // Extract owner references
-  const rawOwnerRefs = associatedResource?.ownerReferences || [];
-  const ownerReferences = rawOwnerRefs.map((ref) => ({
+  const rawOwnerRefs = (associatedResource?.ownerReferences && associatedResource.ownerReferences.length > 0)
+    ? associatedResource.ownerReferences
+    : Array.isArray((tech as any).ownerReferences)
+    ? (tech as any).ownerReferences
+    : [];
+  const ownerReferences = rawOwnerRefs.map((ref: any) => ({
     kind: ref.kind || 'Unknown',
     name: ref.name || 'Unknown',
     controller: ref.controller

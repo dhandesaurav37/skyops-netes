@@ -620,7 +620,13 @@ Ticket: ${analysis.incidentId}
 
                 {/* Remediation Status Pill */}
                 <div>
-                  {remediation.status === 'PROPOSED' && (
+                  {remediation.status === 'PROPOSED' && remediation.isExecutable === false && (
+                    <span className="px-2.5 py-1 rounded text-xs font-mono font-bold bg-zinc-900 text-amber-300 border border-amber-800/80 flex items-center gap-1.5">
+                      <AlertTriangle className="w-3 h-3 text-amber-400" />
+                      MANUAL RESOLUTION
+                    </span>
+                  )}
+                  {remediation.status === 'PROPOSED' && remediation.isExecutable !== false && (
                     <span className="px-2.5 py-1 rounded text-xs font-mono font-bold bg-amber-950/80 text-amber-300 border border-amber-800 flex items-center gap-1.5">
                       <Lock className="w-3 h-3" />
                       AWAITING APPROVAL
@@ -859,41 +865,58 @@ Ticket: ${analysis.incidentId}
 
               {/* Interactive Approval Bar for SRE Engineer */}
               {remediation.status === 'PROPOSED' && canEdit && (
-                <div className="p-3 rounded-lg bg-zinc-950/90 border border-sky-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="space-y-0.5">
-                    <span className="text-xs font-bold text-zinc-100 flex items-center gap-1.5">
-                      <Lock className="w-3.5 h-3.5 text-sky-400" />
-                      Engineer Authorization Required
-                    </span>
-                    <p className="text-[11px] text-zinc-400">
-                      Approving will dispatch this typed image update command to the connected SkyOps Kubernetes Agent.
+                remediation.isExecutable === false ? (
+                  <div className="p-3.5 rounded-lg bg-zinc-950/90 border border-amber-600/50 space-y-2">
+                    <div className="flex items-center gap-2 text-xs font-bold text-amber-300">
+                      <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                      <span>Manual Remediation Required — Automated Execution Restricted</span>
+                    </div>
+                    <p className="text-[11px] text-zinc-300 leading-relaxed">
+                      {remediation.unexecutableReason ||
+                        'Automated mutation is strictly limited to standalone Pod image replacements. Controller-managed resources require updating parent manifests in Git or CI/CD to prevent state reconciliation drift.'}
                     </p>
+                    <div className="pt-1 flex items-center gap-2 text-[10px] text-zinc-400 font-mono">
+                      <ShieldCheck className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                      <span>Inspect recommended YAML manifest changes or diagnostic commands provided in the analysis above.</span>
+                    </div>
                   </div>
+                ) : (
+                  <div className="p-3 rounded-lg bg-zinc-950/90 border border-sky-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="space-y-0.5">
+                      <span className="text-xs font-bold text-zinc-100 flex items-center gap-1.5">
+                        <Lock className="w-3.5 h-3.5 text-sky-400" />
+                        Engineer Authorization Required
+                      </span>
+                      <p className="text-[11px] text-zinc-400">
+                        Approving will dispatch this typed image update command to the connected SkyOps Kubernetes Agent.
+                      </p>
+                    </div>
 
-                  <div className="flex items-center gap-2 shrink-0">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleRejectRemediation}
-                      disabled={actionLoading}
-                      icon={<X className="w-3.5 h-3.5 text-zinc-400" />}
-                      className="text-xs text-zinc-300 hover:text-rose-300 hover:border-rose-800"
-                    >
-                      Decline
-                    </Button>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleRejectRemediation}
+                        disabled={actionLoading}
+                        icon={<X className="w-3.5 h-3.5 text-zinc-400" />}
+                        className="text-xs text-zinc-300 hover:text-rose-300 hover:border-rose-800"
+                      >
+                        Decline
+                      </Button>
 
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      onClick={handleApproveRemediation}
-                      disabled={actionLoading}
-                      icon={<Play className="w-3.5 h-3.5" />}
-                      className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-sm"
-                    >
-                      {actionLoading ? 'Dispatching...' : 'Approve & Execute Fix'}
-                    </Button>
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        onClick={handleApproveRemediation}
+                        disabled={actionLoading}
+                        icon={<Play className="w-3.5 h-3.5" />}
+                        className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-sm"
+                      >
+                        {actionLoading ? 'Dispatching...' : 'Approve & Execute Fix'}
+                      </Button>
+                    </div>
                   </div>
-                </div>
+                )
               )}
             </div>
           )}

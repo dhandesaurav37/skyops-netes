@@ -18,6 +18,7 @@ import {
   Send,
   Server,
   Shield,
+  ShieldCheck,
   Tag,
   Trash2,
   User,
@@ -65,6 +66,7 @@ export const IncidentDetailView: React.FC<IncidentDetailViewProps> = ({
   const [isDeleting, setIsDeleting] = useState(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [pdfSuccess, setPdfSuccess] = useState(false);
+  const [statusError, setStatusError] = useState<string | null>(null);
 
   const fetchIncidentData = async () => {
     try {
@@ -121,12 +123,21 @@ export const IncidentDetailView: React.FC<IncidentDetailViewProps> = ({
     if (!incident || !canEditIncidents) return;
     try {
       setStatusUpdateLoading(true);
-      const updated = await api.updateIncident(incident.id, { status: newStatus });
+      setStatusError(null);
+      let resolutionReason: string | undefined = undefined;
+      if (newStatus === 'RESOLVED') {
+        const inputReason = window.prompt('Enter an optional resolution note or reason for manually marking this incident resolved:');
+        if (inputReason !== null) {
+          resolutionReason = inputReason.trim() || undefined;
+        }
+      }
+      const updated = await api.updateIncident(incident.id, { status: newStatus, resolutionReason });
       setIncident(updated);
       const updatedData = await api.getIncident(incident.id);
       setTimeline(updatedData.timeline);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to update status:', err);
+      setStatusError(err?.message || 'Failed to update incident status');
     } finally {
       setStatusUpdateLoading(false);
     }
@@ -301,6 +312,22 @@ export const IncidentDetailView: React.FC<IncidentDetailViewProps> = ({
         </div>
       </div>
 
+      {/* Status Action Error Banner */}
+      {statusError && (
+        <div className="p-3.5 rounded-lg bg-rose-950/80 border border-rose-800 text-xs text-rose-200 flex items-center justify-between gap-2 shadow-xs font-mono">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+            <span>{statusError}</span>
+          </div>
+          <button
+            onClick={() => setStatusError(null)}
+            className="text-rose-400 hover:text-rose-200 text-xs font-bold px-2 py-0.5 rounded hover:bg-rose-900/50"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {/* --- EXECUTIVE INCIDENT SUMMARY CARD --- */}
       <div className="p-5 rounded-xl bg-linear-to-br from-zinc-900/90 via-zinc-900/60 to-zinc-950 border border-sky-900/40 shadow-xs space-y-3">
         <div className="flex items-center justify-between border-b border-zinc-800/80 pb-2.5">
@@ -450,9 +477,35 @@ export const IncidentDetailView: React.FC<IncidentDetailViewProps> = ({
             </div>
 
             {incident.resolvedAt && (
-              <div className="p-3 bg-emerald-950/30 border border-emerald-900/60 rounded-lg font-mono text-xs flex items-center justify-between text-emerald-300">
-                <span>Incident Duration / Mean Time to Recovery:</span>
-                <span className="font-bold">{formatDuration(incident.firstSeenAt, incident.resolvedAt)}</span>
+              <div className="space-y-2">
+                <div className="p-3 bg-emerald-950/30 border border-emerald-900/60 rounded-lg font-mono text-xs flex items-center justify-between text-emerald-300">
+                  <span>Incident Duration / Mean Time to Recovery:</span>
+                  <span className="font-bold">{formatDuration(incident.firstSeenAt, incident.resolvedAt)}</span>
+                </div>
+
+                {/* Explicit Resolution Provenance Badge */}
+                {incident.resolutionSource === 'AUTOMATIC_VERIFIED' || incident.resolution?.source === 'AUTOMATIC_VERIFIED' ? (
+                  <div className="p-3 bg-emerald-950/40 border border-emerald-800/80 rounded-lg font-mono text-xs space-y-1 text-emerald-200">
+                    <div className="flex items-center gap-1.5 font-bold text-emerald-300">
+                      <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                      Resolution: Automatically Verified by Kubernetes Telemetry
+                    </div>
+                    <p className="text-zinc-300 text-[11px] font-sans">
+                      {incident.resolution?.reason || 'Workload health and ready state verified from live cluster telemetry.'}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="p-3 bg-zinc-950 border border-zinc-800 rounded-lg font-mono text-xs space-y-1 text-zinc-300">
+                    <div className="flex items-center gap-1.5 font-bold text-zinc-200">
+                      <UserCheck className="w-4 h-4 text-sky-400" />
+                      Resolution: Manually Resolved by Operator
+                    </div>
+                    <p className="text-zinc-400 text-[11px] font-sans">
+                      Marked resolved by {incident.resolution?.resolvedBy?.name || 'Operator'}{incident.resolution?.reason ? `: "${incident.resolution.reason}"` : ''}.
+                      <span className="text-zinc-500 block text-[10px] mt-0.5">Note: Closed by human operator; not independently verified by live Kubernetes telemetry.</span>
+                    </p>
+                  </div>
+                )}
               </div>
             )}
           </div>

@@ -946,6 +946,7 @@ const UpdateIncidentSchema = z.object({
   status: z.enum(['OPEN', 'ACKNOWLEDGED', 'IN_PROGRESS', 'RESOLVED', 'CLOSED']).optional(),
   severity: z.enum(['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO']).optional(),
   title: z.string().min(3).max(200).optional(),
+  resolutionReason: z.string().max(500).optional(),
   assignee: z
     .object({
       userId: z.string(),
@@ -966,18 +967,22 @@ app.patch(
       return res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid incident update payload' });
     }
 
-    const updated = store.updateIncident(
-      req.params.id,
-      req.orgId!,
-      parsed.data,
-      { id: req.user!.id, name: req.user!.name }
-    );
+    try {
+      const updated = store.updateIncident(
+        req.params.id,
+        req.orgId!,
+        parsed.data,
+        { id: req.user!.id, name: req.user!.name }
+      );
 
-    if (!updated) {
-      return res.status(404).json({ error: 'Incident not found' });
+      if (!updated) {
+        return res.status(404).json({ error: 'Incident not found' });
+      }
+
+      res.json({ incident: updated });
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message || 'Failed to update incident' });
     }
-
-    res.json({ incident: updated });
   }
 );
 

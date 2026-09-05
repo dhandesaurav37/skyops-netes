@@ -265,6 +265,7 @@ class ApiClient {
       severity?: IncidentSeverity;
       title?: string;
       assignee?: { userId: string; name: string; email: string };
+      resolutionReason?: string;
     }
   ): Promise<Incident> {
     const data = await this.request<{ incident: Incident }>(`/api/v1/incidents/${id}`, {
