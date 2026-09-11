@@ -27,7 +27,8 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: dhandesaurav37/skyops-agent
+  PRIMARY_IMAGE: ${{ github.repository }}
+  STANDALONE_IMAGE: dhandesaurav37/skyops-agent
 
 jobs:
   test:
@@ -83,16 +84,30 @@ jobs:
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "Building SkyOps Agent version: ${VERSION}"
 
-      - name: Resolve Lowercase Target Image
+      - name: Resolve Lowercase Target Images
         id: image_info
         run: |
-          RAW_IMAGE="${{ env.IMAGE_NAME }}"
-          if [ -z "$RAW_IMAGE" ]; then
-            RAW_IMAGE="${{ github.repository_owner }}/skyops-agent"
+          # 1. Resolve primary image matching repository name (natively authorized for GITHUB_TOKEN)
+          PRIMARY_RAW="${{ env.PRIMARY_IMAGE }}"
+          if [ -z "$PRIMARY_RAW" ]; then
+            PRIMARY_RAW="dhandesaurav37/skyops-netes"
           fi
-          LOWERCASE_IMAGE=$(echo "$RAW_IMAGE" | tr '[:upper:]' '[:lower:]')
-          echo "image=${LOWERCASE_IMAGE}" >> $GITHUB_OUTPUT
-          echo "Resolved target container image: ${{ env.REGISTRY }}/${LOWERCASE_IMAGE}"
+          PRIMARY_LOWER=$(echo "$PRIMARY_RAW" | tr '[:upper:]' '[:lower:]')
+          IMAGE_LIST="${{ env.REGISTRY }}/${PRIMARY_LOWER}"
+
+          # 2. If a Personal Access Token (GHCR_TOKEN / CR_PAT) is present, also publish to skyops-agent
+          if [ -n "${{ secrets.GHCR_TOKEN }}" ] || [ -n "${{ secrets.CR_PAT }}" ]; then
+            STANDALONE_RAW="${{ env.STANDALONE_IMAGE }}"
+            STANDALONE_LOWER=$(echo "$STANDALONE_RAW" | tr '[:upper:]' '[:lower:]')
+            IMAGE_LIST="${IMAGE_LIST}
+${{ env.REGISTRY }}/${STANDALONE_LOWER}"
+          fi
+
+          echo "images<<EOF" >> $GITHUB_OUTPUT
+          echo "$IMAGE_LIST" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          echo "Target Container Images to push:"
+          echo "$IMAGE_LIST"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -112,7 +127,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ steps.image_info.outputs.image }}
+          images: ${{ steps.image_info.outputs.images }}
           tags: |
             # Tag with Git Commit SHA
             type=sha,format=short,prefix=sha-
