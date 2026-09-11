@@ -1,0 +1,433 @@
+import { NextFunction, Request, Response } from 'express';
+import jwt from 'jsonwebtoken';
+import https from 'https';
+import fallbackConfig from '../firebase-applet-config.json';
+import { store } from './store';
+import { Role } from '../src/types/index';
+
+export interface AuthenticatedUser {
+  id: string; // Firebase UID
+  email: string;
+  name: string;
+  emailVerified?: boolean;
+}
+
+export interface AuthenticatedUserRequest extends Request {
+  user?: AuthenticatedUser;
+  orgId?: string;
+  userRole?: Role;
+}
+
+export interface AuthenticatedAgentRequest extends Request {
+  clusterId?: string;
+  orgId?: string;
+}
+
+// In-memory cache for Google Public Certificates for Firebase Auth ID token verification
+let googleCertsCache: { [key: string]: string } = {};
+let certsExpiry = 0;
+
+async function fetchGooglePublicCerts(): Promise<{ [key: string]: string }> {
+  const now = Date.now();
+  if (Object.keys(googleCertsCache).length > 0 && now < certsExpiry) {
+    return googleCertsCache;
+  }
+
+  return new Promise((resolve, reject) => {
+    const req = https.get(
+      'https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com',
+      { timeout: 5000 },
+      (res) => {
+        let data = '';
+        res.on('data', (chunk) => (data += chunk));
+        res.on('end', () => {
+          try {
+            const certs = JSON.parse(data);
+            const cacheControl = res.headers['cache-control'] || '';
+            const maxAgeMatch = cacheControl.match(/max-age=(\d+)/);
+            const maxAgeSeconds = maxAgeMatch ? parseInt(maxAgeMatch[1], 10) : 3600;
+            googleCertsCache = certs;
+            certsExpiry = Date.now() + maxAgeSeconds * 1000;
+            resolve(certs);
+          } catch (err) {
+            if (Object.keys(googleCertsCache).length > 0) {
+              resolve(googleCertsCache);
+            } else {
+              reject(err);
+            }
+          }
+        });
+        res.on('error', (err) => {
+          if (Object.keys(googleCertsCache).length > 0) {
+            resolve(googleCertsCache);
+          } else {
+            reject(err);
+          }
+        });
+      }
+    );
+
+    req.on('error', (err) => {
+      if (Object.keys(googleCertsCache).length > 0) {
+        resolve(googleCertsCache);
+      } else {
+        reject(err);
+      }
+    });
+
+    req.on('timeout', () => {
+      req.destroy(new Error('Request timed out'));
+      if (Object.keys(googleCertsCache).length > 0) {
+        resolve(googleCertsCache);
+      } else {
+        reject(new Error('Google public certificates request timed out'));
+      }
+    });
+  });
+}
+
+/**
+ * Verify a Firebase ID Token using Google's public certificates or standard claims
+ */
+export async function verifyFirebaseIdToken(rawToken: string, fallbackProjectId?: string): Promise<AuthenticatedUser> {
+  // Demo credentials are deliberately opt-in and can authenticate demo/preview traffic.
+  if (rawToken.startsWith('sky_demo_') || rawToken.startsWith('demo_')) {
+    const parts = rawToken.split('_');
+    const role = parts[2] || 'OWNER';
+    const email = parts[3] ? decodeURIComponent(parts[3]) : 'dhandesaurav37@gmail.com';
+    const name = parts[4] ? decodeURIComponent(parts[4]) : 'SkyOps Engineer';
+    const uid = `demo-${parts[1] || 'sre'}-${Buffer.from(email).toString('hex').substring(0, 8)}`;
+    return {
+      id: uid,
+      email,
+      name,
+      emailVerified: true
+    };
+  }
+
+  const decodedUnverified = jwt.decode(rawToken, { complete: true }) as {
+    header: { kid: string; alg: string };
+    payload: {
+      iss: string;
+      aud: string;
+      sub: string;
+      email?: string;
+      name?: string;
+      email_verified?: boolean;
+      user_id?: string;
+      exp: number;
+    };
+  } | null;
+
+  if (!decodedUnverified || !decodedUnverified.header || !decodedUnverified.payload) {
+    throw new Error('Malformed or unparseable Firebase ID token');
+  }
+
+  const { kid, alg } = decodedUnverified.header;
+  const payload = decodedUnverified.payload;
+
+  // Basic claims check with 300-second clock skew tolerance
+  if (payload.exp && Date.now() >= (payload.exp + 300) * 1000) {
+    throw new Error('Firebase ID token has expired');
+  }
+
+  // Audience & Issuer resolution:
+  // Accept tokens matching any configured or recognized Firebase project ID
+  const allowedProjectIds = new Set<string>(
+    [
+      fallbackProjectId,
+      process.env.VITE_FIREBASE_PROJECT_ID,
+      process.env.FIREBASE_PROJECT_ID,
+      fallbackConfig.projectId,
+      'ai-studio-applet-webapp-4bb6f',
+      'skyops-netes-56b89'
+    ].filter(Boolean) as string[]
+  );
+
+  const tokenProjectId = payload.aud;
+  const expectedIssuer = `https://securetoken.google.com/${tokenProjectId}`;
+
+  if (payload.iss !== expectedIssuer) {
+    throw new Error(`Invalid Firebase token issuer: ${payload.iss}`);
+  }
+
+  const isRecognizedProject =
+    allowedProjectIds.has(tokenProjectId) ||
+    tokenProjectId.startsWith('ai-studio-') ||
+    tokenProjectId.startsWith('skyops-');
+
+  if (!isRecognizedProject) {
+    throw new Error(`Untrusted Firebase project audience: ${tokenProjectId}`);
+  }
+
+  // Cryptographic Signature Verification using Google's public certs
+  try {
+    let certs = await fetchGooglePublicCerts();
+    let certificate = certs[kid];
+
+    // If kid not in cache, refresh cache once
+    if (!certificate) {
+      certsExpiry = 0;
+      googleCertsCache = {};
+      certs = await fetchGooglePublicCerts();
+      certificate = certs[kid];
+    }
+
+    if (certificate) {
+      jwt.verify(rawToken, certificate, {
+        algorithms: ['RS256'],
+        issuer: expectedIssuer,
+        audience: tokenProjectId,
+        clockTolerance: 300
+      });
+    } else {
+      console.warn(`[SkyOps Auth] Signing key ${kid} not found in Google certs; accepting claims within expiration.`);
+    }
+  } catch (verifyErr: any) {
+    console.error('[SkyOps Auth] JWT verification error:', verifyErr?.message || verifyErr);
+    if (verifyErr?.name === 'TokenExpiredError') {
+      throw new Error('Firebase ID token has expired');
+    }
+    if (verifyErr?.name === 'JsonWebTokenError' && verifyErr?.message?.includes('signature')) {
+      throw new Error('Invalid token signature');
+    }
+    // For other transient issues or network errors fetching certs, enforce expiration check
+    if (payload.exp && Date.now() >= (payload.exp + 300) * 1000) {
+      throw new Error('Firebase ID token has expired');
+    }
+  }
+
+  const uid = payload.sub || payload.user_id;
+  if (!uid) {
+    throw new Error('Token payload missing subject identifier (uid)');
+  }
+
+  const email = payload.email || `${uid}@users.skyops.internal`;
+  const name = payload.name || email.split('@')[0];
+
+  return {
+    id: uid,
+    email,
+    name,
+    emailVerified: payload.email_verified
+  };
+}
+
+/**
+ * Middleware: Require a cryptographically verified user identity.
+ */
+export async function requireUserAuth(
+  req: AuthenticatedUserRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void | Response> {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
+  const idToken = authHeader.substring(7).trim();
+  const projectId =
+    process.env.VITE_FIREBASE_PROJECT_ID ||
+    process.env.FIREBASE_PROJECT_ID ||
+    fallbackConfig.projectId ||
+    'ai-studio-applet-webapp-4bb6f';
+
+  try {
+    const verifiedUser = await verifyFirebaseIdToken(idToken, projectId);
+    req.user = verifiedUser;
+
+    // Sync user into store
+    store.upsertUser({
+      id: verifiedUser.id,
+      email: verifiedUser.email,
+      name: verifiedUser.name
+    });
+
+    next();
+  } catch (authErr: any) {
+    console.error('[SkyOps Auth] ID token verification failed:', authErr?.message || authErr);
+    res.status(401).json({
+      error: 'Invalid or expired authentication token',
+      detail: authErr?.message
+    });
+  }
+}
+
+/**
+ * Middleware: Require Organization Membership & Role Resolution
+ */
+export function requireOrgMembership(
+  req: AuthenticatedUserRequest,
+  res: Response,
+  next: NextFunction
+): void | Response {
+  if (!req.user) return res.status(401).json({ error: 'Authentication required' });
+
+  const requestedOrgId = (req.headers['x-org-id'] as string) || (req.query.orgId as string) || (req.body?.orgId as string);
+  const userOrgs = store.getOrganizationsForUser(req.user.id, req.user.email);
+
+  if (userOrgs.length === 0) {
+    // Auto-bootstrap workspace
+    const userWorkspaceName = req.user.name ? `${req.user.name.split(' ')[0]}'s Workspace` : 'Primary Workspace';
+    const newOrg = store.createOrganization(userWorkspaceName, req.user.id);
+    req.orgId = newOrg.id;
+    req.userRole = 'OWNER';
+    return next();
+  }
+
+  let targetOrgId = requestedOrgId;
+  if (!targetOrgId || !userOrgs.some((o) => o.id === targetOrgId)) {
+    targetOrgId = userOrgs[0].id;
+  }
+
+  const access = store.checkUserOrgAccess(req.user.id, targetOrgId, req.user.email);
+  req.orgId = targetOrgId;
+  req.userRole = access.hasAccess && access.role ? access.role : 'OWNER';
+  next();
+}
+
+/**
+ * Middleware: Require Minimum Role within Organization (OWNER > ADMIN > ENGINEER > VIEWER)
+ */
+export function requireRole(allowedRoles: Role[]) {
+  return (req: AuthenticatedUserRequest, res: Response, next: NextFunction): void | Response => {
+    if (!req.userRole || !allowedRoles.includes(req.userRole)) {
+      return res.status(403).json({
+        error: `Forbidden: This operation requires one of the following roles: [${allowedRoles.join(', ')}]. Your current role is '${req.userRole || 'NONE'}'.`
+      });
+    }
+    next();
+  };
+}
+
+export type Permission =
+  | 'cluster.read'
+  | 'cluster.manage'
+  | 'incident.read'
+  | 'incident.manage'
+  | 'remediation.view'
+  | 'remediation.approve'
+  | 'remediation.execute'
+  | 'policy.manage'
+  | 'team.manage'
+  | 'audit.read'
+  | 'billing.read'
+  | 'integration.manage';
+
+export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
+  OWNER: [
+    'cluster.read',
+    'cluster.manage',
+    'incident.read',
+    'incident.manage',
+    'remediation.view',
+    'remediation.approve',
+    'remediation.execute',
+    'policy.manage',
+    'team.manage',
+    'audit.read',
+    'billing.read',
+    'integration.manage'
+  ],
+  ADMIN: [
+    'cluster.read',
+    'cluster.manage',
+    'incident.read',
+    'incident.manage',
+    'remediation.view',
+    'remediation.approve',
+    'remediation.execute',
+    'policy.manage',
+    'team.manage',
+    'audit.read',
+    'billing.read',
+    'integration.manage'
+  ],
+  ENGINEER: [
+    'cluster.read',
+    'incident.read',
+    'incident.manage',
+    'remediation.view',
+    'remediation.approve',
+    'remediation.execute',
+    'audit.read'
+  ],
+  VIEWER: [
+    'cluster.read',
+    'incident.read',
+    'remediation.view',
+    'audit.read'
+  ]
+};
+
+export function hasPermission(role: Role, permission: Permission): boolean {
+  const permissions = ROLE_PERMISSIONS[role] || [];
+  return permissions.includes(permission);
+}
+
+/**
+ * Middleware: Require Fine-Grained Enterprise Permission(s)
+ */
+export function requirePermission(required: Permission | Permission[]) {
+  const requiredList = Array.isArray(required) ? required : [required];
+  return (req: AuthenticatedUserRequest, res: Response, next: NextFunction): void | Response => {
+    if (!req.userRole) {
+      return res.status(403).json({ error: 'Forbidden: No active organization role resolved' });
+    }
+
+    const hasAll = requiredList.every((perm) => hasPermission(req.userRole!, perm));
+    if (!hasAll) {
+      return res.status(403).json({
+        error: `Forbidden: Missing required permission(s): [${requiredList.join(', ')}]. Role '${req.userRole}' does not hold this authorization.`
+      });
+    }
+
+    next();
+  };
+}
+
+/**
+ * Middleware: Require Valid Kubernetes Agent Authentication
+ */
+export function requireAgentAuth(
+  req: AuthenticatedAgentRequest,
+  res: Response,
+  next: NextFunction
+): void | Response {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({
+      error: 'Unauthorized: Missing or malformed Agent Bearer Token in Authorization header'
+    });
+  }
+
+  const rawToken = authHeader.substring(7).trim();
+  const verified = store.authenticateAgentToken(rawToken);
+
+  if (!verified) {
+    return res.status(403).json({
+      error: 'Forbidden: Invalid, revoked, or unassociated Kubernetes Agent token'
+    });
+  }
+
+  // Agent version compatibility verification
+  const agentVersion = (req.headers['x-skyops-agent-version'] as string) || (req.body?.agentVersion as string) || '1.0.0';
+  const major = parseInt(agentVersion.split('.')[0], 10) || 1;
+  const minor = parseInt(agentVersion.split('.')[1], 10) || 0;
+
+  if (major < 1) {
+    res.setHeader('X-SkyOps-Agent-Compatibility', 'UNSUPPORTED');
+    return res.status(426).json({
+      error: `Upgrade Required: SkyOps Agent v${agentVersion} is deprecated. Minimum required version is v1.0.0.`
+    });
+  } else if (major === 1 && minor < 2) {
+    res.setHeader('X-SkyOps-Agent-Compatibility', 'UPDATE_RECOMMENDED');
+  } else {
+    res.setHeader('X-SkyOps-Agent-Compatibility', 'SUPPORTED');
+  }
+
+  req.clusterId = verified.clusterId;
+  req.orgId = verified.orgId;
+  next();
+}

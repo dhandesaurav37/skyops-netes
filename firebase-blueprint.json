@@ -1,0 +1,51 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Authenticated user profile in SkyOps",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth user identifier"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Corporate user email"
+        },
+        "fullName": {
+          "type": "string",
+          "description": "Full name of the user"
+        },
+        "organisationName": {
+          "type": "string",
+          "description": "Primary or initial organization name"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["OWNER", "ADMIN", "ENGINEER", "VIEWER"],
+          "description": "SkyOps RBAC role"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update timestamp"
+        }
+      },
+      "required": ["uid", "email", "fullName", "role"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile collection indexed by Firebase Auth UID"
+    }
+  }
+}
+

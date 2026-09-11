@@ -1,0 +1,1231 @@
+{
+  "users": {
+    "hbepfD5Ch2YwozIU7UiuLv6py2r1": {
+      "id": "hbepfD5Ch2YwozIU7UiuLv6py2r1",
+      "email": "dhandesaurav37@gmail.com",
+      "name": "Saurav Dhande"
+    },
+    "usr-sre-lead": {
+      "id": "usr-sre-lead",
+      "email": "dhandesaurav37@gmail.com",
+      "name": "Alex Rivera (Staff SRE)"
+    },
+    "3CIKHqm0RPgvty84pbhPPSdv4562": {
+      "id": "3CIKHqm0RPgvty84pbhPPSdv4562",
+      "email": "dhandesaurav52@gmail.com",
+      "name": "saurav dhande"
+    },
+    "demo-test-6468616e": {
+      "id": "demo-test-6468616e",
+      "email": "dhandesaurav52@gmail.com",
+      "name": "Alex Rivera (Staff SRE)"
+    },
+    "demo-user-6468616e": {
+      "id": "demo-user-6468616e",
+      "email": "dhandesaurav52@gmail.com",
+      "name": "Alex Rivera (Staff SRE)"
+    }
+  },
+  "orgs": {
+    "org-production-sre": {
+      "id": "org-production-sre",
+      "name": "Acme Platform Engineering",
+      "slug": "acme-platform",
+      "createdAt": 1784996989203,
+      "membersCount": 3
+    },
+    "org-85197e5f1bd6": {
+      "id": "org-85197e5f1bd6",
+      "name": "Saurav's Workspace",
+      "slug": "saurav-s-workspace",
+      "createdAt": 1787588999005,
+      "membersCount": 1
+    },
+    "org-0890c5036a3e": {
+      "id": "org-0890c5036a3e",
+      "name": "Alex's Workspace",
+      "slug": "alex-s-workspace",
+      "createdAt": 1787589227187,
+      "membersCount": 1
+    },
+    "org-3e149f888c5f": {
+      "id": "org-3e149f888c5f",
+      "name": "saurav's Workspace",
+      "slug": "saurav-s-workspace",
+      "createdAt": 1788682204142,
+      "membersCount": 1
+    },
+    "org-d4231c749eea": {
+      "id": "org-d4231c749eea",
+      "name": "Alex's Workspace",
+      "slug": "alex-s-workspace",
+      "createdAt": 1789035518780,
+      "membersCount": 1
+    },
+    "org-f39f8b933f0f": {
+      "id": "org-f39f8b933f0f",
+      "name": "Alex's Workspace",
+      "slug": "alex-s-workspace",
+      "createdAt": 1789035622895,
+      "membersCount": 1
+    }
+  },
+  "members": {
+    "org-85197e5f1bd6": [
+      {
+        "userId": "hbepfD5Ch2YwozIU7UiuLv6py2r1",
+        "email": "dhandesaurav37@gmail.com",
+        "name": "Saurav Dhande",
+        "role": "OWNER",
+        "joinedAt": 1787588999005
+      }
+    ],
+    "org-0890c5036a3e": [
+      {
+        "userId": "usr-sre-lead",
+        "email": "dhandesaurav37@gmail.com",
+        "name": "Alex Rivera (Staff SRE)",
+        "role": "OWNER",
+        "joinedAt": 1787589227187
+      }
+    ],
+    "org-3e149f888c5f": [
+      {
+        "userId": "3CIKHqm0RPgvty84pbhPPSdv4562",
+        "email": "dhandesaurav52@gmail.com",
+        "name": "saurav dhande",
+        "role": "OWNER",
+        "joinedAt": 1788682204142
+      }
+    ],
+    "org-d4231c749eea": [
+      {
+        "userId": "3CIKHqm0RPgvty84pbhPPSdv4562",
+        "email": "dhandesaurav52@gmail.com",
+        "name": "Alex Rivera (Staff SRE)",
+        "role": "OWNER",
+        "joinedAt": 1789035518780
+      }
+    ],
+    "org-f39f8b933f0f": [
+      {
+        "userId": "3CIKHqm0RPgvty84pbhPPSdv4562",
+        "email": "dhandesaurav52@gmail.com",
+        "name": "Alex Rivera (Staff SRE)",
+        "role": "OWNER",
+        "joinedAt": 1789035622895
+      }
+    ]
+  },
+  "clusters": {
+    "cls-5a6532fb1d5f": {
+      "id": "cls-5a6532fb1d5f",
+      "orgId": "org-0890c5036a3e",
+      "name": "killercoda-prod-test",
+      "description": "Integration validation cluster",
+      "status": "AGENT_OFFLINE",
+      "agentStatus": "OFFLINE",
+      "connectionState": "offline",
+      "connectionCode": "SKYOPS-Y964-93JA",
+      "connectionCodeExpiresAt": 1787590127189,
+      "installKey": "sky_inst_a5966077c9d1a83904d3738bab24f0d34c2e649e",
+      "installKeyExpiresAt": 1787592827190,
+      "nodeCount": 2,
+      "podCount": 14,
+      "openIncidentCount": 1,
+      "createdAt": 1787589227190,
+      "agentToken": "sky_agent_7eb2a71ac466f48237cfee2133f0346910a418071f1233df",
+      "lastSeenAt": 1787589233732,
+      "lastHeartbeat": 1787589233732,
+      "lastHeartbeatAt": 1787589233732,
+      "agentDetectedAt": 1787589231566,
+      "connectedAt": 1787589231566,
+      "agentVersion": "v1.5.0",
+      "k8sVersion": "v1.31.2",
+      "connectionStatus": "connected"
+    },
+    "cls-a1a745aadec4": {
+      "id": "cls-a1a745aadec4",
+      "orgId": "org-0890c5036a3e",
+      "name": "E2E Test Cluster",
+      "description": "Verification cluster",
+      "status": "AGENT_OFFLINE",
+      "agentStatus": "OFFLINE",
+      "connectionState": "offline",
+      "connectionCode": "GH4Q-DLZQ",
+      "connectionCodeExpiresAt": 1787593395318,
+      "installKey": "sky_inst_34c8b9bb3cb7f7f9f96978f90eb989f42086b61c",
+      "installKeyExpiresAt": 1787596095318,
+      "nodeCount": 0,
+      "podCount": 0,
+      "openIncidentCount": 0,
+      "createdAt": 1787592495318,
+      "agentToken": "sky_agent_b55c51cd63fab4b9eb55a0245396273aa3451f0b28cd74c4",
+      "lastSeenAt": 1787592495396,
+      "lastHeartbeat": 1787592495396,
+      "lastHeartbeatAt": 1787592495396,
+      "agentDetectedAt": 1787592495396,
+      "connectedAt": 1787592495396,
+      "agentVersion": "v1.5.0",
+      "k8sVersion": "v1.31.2",
+      "connectionStatus": "connected"
+    },
+    "cls-71d4484f17c8": {
+      "id": "cls-71d4484f17c8",
+      "orgId": "org-0890c5036a3e",
+      "name": "Production EKS Verification",
+      "description": "Verification cluster",
+      "status": "AGENT_OFFLINE",
+      "agentStatus": "OFFLINE",
+      "connectionState": "offline",
+      "connectionCode": "SKYOPS-DRPW-ADGM",
+      "connectionCodeExpiresAt": 1787593407252,
+      "installKey": "sky_inst_37f27730a72e80b7079975af33719dfe7d085bcc",
+      "installKeyExpiresAt": 1787596107252,
+      "nodeCount": 0,
+      "podCount": 0,
+      "openIncidentCount": 0,
+      "createdAt": 1787592507252,
+      "agentToken": "sky_agent_f13ac7b13070238b36dd0dbdcf4f408c9b10de21a7f66bd1",
+      "lastSeenAt": 1787592507338,
+      "lastHeartbeat": 1787592507338,
+      "lastHeartbeatAt": 1787592507338,
+      "agentDetectedAt": 1787592507338,
+      "connectedAt": 1787592507338,
+      "agentVersion": "v1.5.0",
+      "k8sVersion": "v1.31.2",
+      "connectionStatus": "connected"
+    },
+    "cls-31a850b02e33": {
+      "id": "cls-31a850b02e33",
+      "orgId": "org-0890c5036a3e",
+      "name": "Production EKS Verification",
+      "description": "Verification cluster",
+      "status": "pending",
+      "agentStatus": "PENDING",
+      "connectionState": "pending",
+      "connectionCode": "SKYOPS-MZRN-HWKU",
+      "connectionCodeExpiresAt": 1787593411765,
+      "installKey": "sky_inst_58f645f010b5a444f37d9761acdb62878cc46b11",
+      "installKeyExpiresAt": 1787596111765,
+      "nodeCount": 0,
+      "podCount": 0,
+      "openIncidentCount": 0,
+      "createdAt": 1787592511765,
+      "agentToken": "sky_agent_56c4ad511fb97c77b6db4e1aaa6a91f3bf9c31ebcc932478"
+    },
+    "cls-96d308f392fe": {
+      "id": "cls-96d308f392fe",
+      "orgId": "org-0890c5036a3e",
+      "name": "e2e-verification-cluster",
+      "description": "Real K8s cluster test",
+      "status": "AGENT_OFFLINE",
+      "agentStatus": "OFFLINE",
+      "connectionState": "offline",
+      "connectionCode": "SKYOPS-3TB6-4Y5Z",
+      "connectionCodeExpiresAt": 1787596400581,
+      "installKey": "sky_inst_4dafee0de30f35e4da605284a5735b2cd1de90c8",
+      "installKeyExpiresAt": 1787599100581,
+      "nodeCount": 2,
+      "podCount": 2,
+      "openIncidentCount": 0,
+      "createdAt": 1787595500581,
+      "agentToken": "sky_agent_d393a490301a87d0b1fdf04e18c003664dfcc44d10ada8b4",
+      "lastSeenAt": 1787595500602,
+      "lastHeartbeat": 1787595500602,
+      "lastHeartbeatAt": 1787595500602,
+      "agentDetectedAt": 1787595500602,
+      "connectedAt": 1787595500602,
+      "agentVersion": "v1.5.0",
+      "k8sVersion": "v1.32.1",
+      "connectionStatus": "connected"
+    },
+    "cls-ea233f047272": {
+      "id": "cls-ea233f047272",
+      "orgId": "org-85197e5f1bd6",
+      "name": "line",
+      "description": "Environment: Production",
+      "status": "pending",
+      "agentStatus": "PENDING",
+      "connectionState": "pending",
+      "connectionCode": "SKYOPS-CHU7-6AD3",
+      "connectionCodeExpiresAt": 1788326201097,
+      "installKey": "sky_inst_e8fc3a022198f18ac3592454668d739603ec2a4b",
+      "installKeyExpiresAt": 1788328901097,
+      "nodeCount": 0,
+      "podCount": 0,
+      "openIncidentCount": 0,
+      "createdAt": 1788325301097,
+      "agentToken": "sky_agent_caf71028a5b9292d805034127449527eaf7f5f543309a1c0"
+    },
+    "cls-603f23ba3c5a": {
+      "id": "cls-603f23ba3c5a",
+      "orgId": "org-85197e5f1bd6",
+      "name": "kli",
+      "description": "Environment: Production",
+      "status": "pending",
+      "agentStatus": "PENDING",
+      "connectionState": "pending",
+      "connectionCode": "SKYOPS-L7LA-7PSA",
+      "connectionCodeExpiresAt": 1788337039538,
+      "installKey": "sky_inst_9f2bb65156cadb74a1b94804c83df54107519908",
+      "installKeyExpiresAt": 1788339739538,
+      "nodeCount": 0,
+      "podCount": 0,
+      "openIncidentCount": 0,
+      "createdAt": 1788336139538,
+      "agentToken": "sky_agent_65b5bac4d23f158fdd21cde9171f14d284d730cffb807a82"
+    },
+    "cls-91a80cb2a4a5": {
+      "id": "cls-91a80cb2a4a5",
+      "orgId": "org-85197e5f1bd6",
+      "name": "ooo",
+      "description": "Environment: Production",
+      "status": "pending",
+      "agentStatus": "PENDING",
+      "connectionState": "pending",
+      "connectionCode": "SKYOPS-LFLX-QL32",
+      "connectionCodeExpiresAt": 1788337546135,
+      "installKey": "sky_inst_af7914b3326cf8fe681496701e6dec0906aa416d",
+      "installKeyExpiresAt": 1788340246135,
+      "nodeCount": 0,
+      "podCount": 0,
+      "openIncidentCount": 0,
+      "createdAt": 1788336646135,
+      "agentToken": "sky_agent_4e3ed048247fa4b3d958f1b0bc7bfabc4ac5299a5e5c4485"
+    }
+  },
+  "clusterTokens": {
+    "9183898f1fb9fcb92e02f62ca0ceaf4bb60ac2e80a4c378ec97452b42b8c6909": {
+      "clusterId": "cls-5a6532fb1d5f",
+      "orgId": "org-0890c5036a3e"
+    },
+    "457f06f9745e4088d3ee73d96a5dfcfa658bce6e7465c88e4a78a538912bb132": {
+      "clusterId": "cls-a1a745aadec4",
+      "orgId": "org-0890c5036a3e"
+    },
+    "49367bf78c47ee7fa54250a2e5b4a9e5f822b32b08bae7280e9b57e48ccb4f06": {
+      "clusterId": "cls-71d4484f17c8",
+      "orgId": "org-0890c5036a3e"
+    },
+    "cb7ed4b7952b5eaa658af98c534e17111a718dc962ca08e07b2bb6363716f4ee": {
+      "clusterId": "cls-31a850b02e33",
+      "orgId": "org-0890c5036a3e"
+    },
+    "7455de55abd037d7dd3820fbed6d8ec0d6e062ba1614b97e0a1148e88b495094": {
+      "clusterId": "cls-96d308f392fe",
+      "orgId": "org-0890c5036a3e"
+    },
+    "0bede5ab77a1db205b882c653aa0caa931a1313eef2d573d3a1f5b7dd9e35c7a": {
+      "clusterId": "cls-ea233f047272",
+      "orgId": "org-85197e5f1bd6"
+    },
+    "c4a687c6cd2507c655a18aa078e4a227a3d9c7a704fd1bdac6fbc1606a7bd2c9": {
+      "clusterId": "cls-603f23ba3c5a",
+      "orgId": "org-85197e5f1bd6"
+    },
+    "f237ca582660dfde87fdaf9523d4f2991c1992fe245d20c6057c170d5d39ce7f": {
+      "clusterId": "cls-91a80cb2a4a5",
+      "orgId": "org-85197e5f1bd6"
+    }
+  },
+  "resources": {
+    "cls-5a6532fb1d5f": [
+      {
+        "id": "node-worker-01",
+        "clusterId": "cls-5a6532fb1d5f",
+        "kind": "Node",
+        "name": "node-worker-01",
+        "namespace": "",
+        "status": "Ready",
+        "cpuUsage": 42.5,
+        "memoryUsage": 58.1,
+        "labels": {
+          "node.kubernetes.io/instance-type": "c5.xlarge"
+        },
+        "createdAt": 1787580000000,
+        "metrics": {
+          "clusterId": "cls-5a6532fb1d5f",
+          "resourceKind": "Node",
+          "resourceName": "node-worker-01",
+          "nodeName": "node-worker-01",
+          "name": "node-worker-01",
+          "ready": true,
+          "podCount": 4,
+          "podCapacity": 110,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True"
+            },
+            {
+              "type": "MemoryPressure",
+              "status": "False"
+            },
+            {
+              "type": "DiskPressure",
+              "status": "False"
+            },
+            {
+              "type": "PIDPressure",
+              "status": "False"
+            }
+          ],
+          "conditionFlags": {
+            "ready": true,
+            "memoryPressure": false,
+            "diskPressure": false,
+            "pidPressure": false
+          },
+          "cpu": {
+            "request": {
+              "value": 0,
+              "unit": "millicores",
+              "formatted": "0m"
+            },
+            "requests": {
+              "value": 0,
+              "unit": "millicores",
+              "formatted": "0m"
+            },
+            "limit": {
+              "value": 0,
+              "unit": "millicores",
+              "formatted": "0m"
+            },
+            "limits": {
+              "value": 0,
+              "unit": "millicores",
+              "formatted": "0m"
+            },
+            "requestedPercent": 0
+          },
+          "memory": {
+            "request": {
+              "value": 0,
+              "unit": "bytes",
+              "formatted": "0 KiB"
+            },
+            "requests": {
+              "value": 0,
+              "unit": "bytes",
+              "formatted": "0 KiB"
+            },
+            "limit": {
+              "value": 0,
+              "unit": "bytes",
+              "formatted": "0 KiB"
+            },
+            "limits": {
+              "value": 0,
+              "unit": "bytes",
+              "formatted": "0 KiB"
+            },
+            "requestedPercent": 0
+          },
+          "observedAt": 1789035704910,
+          "ingestedAt": 1789035704910,
+          "freshnessStatus": "FRESH",
+          "metricsSource": "SPEC_STATUS_ONLY",
+          "isUsageAvailable": false,
+          "unavailableReason": "Live usage unavailable (metrics.k8s.io not reporting for this node)"
+        }
+      },
+      {
+        "id": "pod-ingress-nginx",
+        "clusterId": "cls-5a6532fb1d5f",
+        "kind": "Pod",
+        "name": "ingress-nginx-controller-748956-2xp91",
+        "namespace": "ingress-nginx",
+        "status": "Running",
+        "restartCount": 0,
+        "cpuUsage": 12,
+        "memoryUsage": 24.5,
+        "createdAt": 1787585000000
+      },
+      {
+        "id": "cls-5a6532fb1d5f:Node:node-control-plane",
+        "clusterId": "cls-5a6532fb1d5f",
+        "kind": "Node",
+        "name": "node-control-plane",
+        "namespace": "",
+        "status": "Ready",
+        "health": "HEALTHY",
+        "cpuUsage": 28.4,
+        "memoryUsage": 45.2,
+        "createdAt": 1788949304909,
+        "updatedAt": 1789035704909,
+        "labels": {
+          "node-role.kubernetes.io/control-plane": "",
+          "kubernetes.io/hostname": "node-control-plane",
+          "kubernetes.io/os": "linux",
+          "kubernetes.io/arch": "amd64"
+        },
+        "specSummary": {
+          "kubeletVersion": "v1.31.2",
+          "osImage": "Ubuntu 24.04 LTS",
+          "kernelVersion": "6.8.0-1017-aws"
+        },
+        "statusSummary": {
+          "kubeletVersion": "v1.31.2",
+          "capacity": {
+            "cpu": "4",
+            "memory": "16384Mi",
+            "pods": "110"
+          },
+          "allocatable": {
+            "cpu": "3800m",
+            "memory": "15400Mi",
+            "pods": "110"
+          }
+        },
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True",
+            "reason": "KubeletReady",
+            "message": "kubelet is posting ready status"
+          },
+          {
+            "type": "MemoryPressure",
+            "status": "False",
+            "reason": "KubeletHasSufficientMemory",
+            "message": "kubelet has sufficient memory"
+          },
+          {
+            "type": "DiskPressure",
+            "status": "False",
+            "reason": "KubeletHasNoDiskPressure",
+            "message": "kubelet has no disk pressure"
+          },
+          {
+            "type": "PIDPressure",
+            "status": "False",
+            "reason": "KubeletHasSufficientPID",
+            "message": "kubelet has sufficient PID available"
+          }
+        ],
+        "metrics": {
+          "clusterId": "cls-5a6532fb1d5f",
+          "resourceKind": "Node",
+          "resourceName": "node-control-plane",
+          "nodeName": "node-control-plane",
+          "name": "node-control-plane",
+          "kubeletVersion": "v1.31.2",
+          "ready": true,
+          "podCount": 9,
+          "podCapacity": 110,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True"
+            },
+            {
+              "type": "MemoryPressure",
+              "status": "False"
+            },
+            {
+              "type": "DiskPressure",
+              "status": "False"
+            },
+            {
+              "type": "PIDPressure",
+              "status": "False"
+            }
+          ],
+          "conditionFlags": {
+            "ready": true,
+            "memoryPressure": false,
+            "diskPressure": false,
+            "pidPressure": false
+          },
+          "cpu": {
+            "capacity": {
+              "value": 4000,
+              "unit": "millicores",
+              "formatted": "4 cores"
+            },
+            "allocatable": {
+              "value": 3800,
+              "unit": "millicores",
+              "formatted": "3.80 cores"
+            },
+            "request": {
+              "value": 0,
+              "unit": "millicores",
+              "formatted": "0m"
+            },
+            "requests": {
+              "value": 0,
+              "unit": "millicores",
+              "formatted": "0m"
+            },
+            "limit": {
+              "value": 0,
+              "unit": "millicores",
+              "formatted": "0m"
+            },
+            "limits": {
+              "value": 0,
+              "unit": "millicores",
+              "formatted": "0m"
+            },
+            "requestedPercent": 0
+          },
+          "memory": {
+            "capacity": {
+              "value": 17179869184,
+              "unit": "bytes",
+              "formatted": "16.0 GiB"
+            },
+            "allocatable": {
+              "value": 16148070400,
+              "unit": "bytes",
+              "formatted": "15.0 GiB"
+            },
+            "request": {
+              "value": 0,
+              "unit": "bytes",
+              "formatted": "0 KiB"
+            },
+            "requests": {
+              "value": 0,
+              "unit": "bytes",
+              "formatted": "0 KiB"
+            },
+            "limit": {
+              "value": 0,
+              "unit": "bytes",
+              "formatted": "0 KiB"
+            },
+            "limits": {
+              "value": 0,
+              "unit": "bytes",
+              "formatted": "0 KiB"
+            },
+            "requestedPercent": 0
+          },
+          "observedAt": 1789035704909,
+          "ingestedAt": 1789035704911,
+          "freshnessStatus": "FRESH",
+          "metricsSource": "SPEC_STATUS_ONLY",
+          "isUsageAvailable": false,
+          "unavailableReason": "Live usage unavailable (metrics.k8s.io not reporting for this node)"
+        }
+      },
+      {
+        "id": "cls-5a6532fb1d5f:Deployment:kube-system:coredns",
+        "clusterId": "cls-5a6532fb1d5f",
+        "kind": "Deployment",
+        "name": "coredns",
+        "namespace": "kube-system",
+        "status": "2/2",
+        "health": "HEALTHY",
+        "createdAt": 1788949304909,
+        "updatedAt": 1789035704909,
+        "specSummary": {
+          "replicas": 2
+        },
+        "statusSummary": {
+          "replicas": 2,
+          "readyReplicas": 2,
+          "availableReplicas": 2,
+          "updatedReplicas": 2
+        },
+        "conditions": [
+          {
+            "type": "Available",
+            "status": "True"
+          }
+        ]
+      },
+      {
+        "id": "cls-5a6532fb1d5f:Deployment:kube-system:local-path-provisioner",
+        "clusterId": "cls-5a6532fb1d5f",
+        "kind": "Deployment",
+        "name": "local-path-provisioner",
+        "namespace": "kube-system",
+        "status": "1/1",
+        "health": "HEALTHY",
+        "createdAt": 1788949304909,
+        "updatedAt": 1789035704909,
+        "specSummary": {
+          "replicas": 1
+        },
+        "statusSummary": {
+          "replicas": 1,
+          "readyReplicas": 1,
+          "availableReplicas": 1,
+          "updatedReplicas": 1
+        },
+        "conditions": [
+          {
+            "type": "Available",
+            "status": "True"
+          }
+        ]
+      },
+      {
+        "id": "cls-5a6532fb1d5f:DaemonSet:kube-system:kube-proxy",
+        "clusterId": "cls-5a6532fb1d5f",
+        "kind": "DaemonSet",
+        "name": "kube-proxy",
+        "namespace": "kube-system",
+        "status": "2/2",
+        "health": "HEALTHY",
+        "createdAt": 1788949304909,
+        "updatedAt": 1789035704909,
+        "specSummary": {
+          "replicas": 2
+        },
+        "statusSummary": {
+          "currentNumberScheduled": 2,
+          "numberReady": 2,
+          "desiredNumberScheduled": 2
+        },
+        "conditions": []
+      },
+      {
+        "id": "cls-5a6532fb1d5f:DaemonSet:kube-system:flannel",
+        "clusterId": "cls-5a6532fb1d5f",
+        "kind": "DaemonSet",
+        "name": "flannel",
+        "namespace": "kube-system",
+        "status": "2/2",
+        "health": "HEALTHY",
+        "createdAt": 1788949304909,
+        "updatedAt": 1789035704909,
+        "specSummary": {
+          "replicas": 2
+        },
+        "statusSummary": {
+          "currentNumberScheduled": 2,
+          "numberReady": 2,
+          "desiredNumberScheduled": 2
+        },
+        "conditions": []
+      },
+      {
+        "id": "cls-5a6532fb1d5f:Deployment:ingress-nginx:ingress-nginx-controller",
+        "clusterId": "cls-5a6532fb1d5f",
+        "kind": "Deployment",
+        "name": "ingress-nginx-controller",
+        "namespace": "ingress-nginx",
+        "status": "1/1",
+        "health": "HEALTHY",
+        "createdAt": 1788949304909,
+        "updatedAt": 1789035704909,
+        "specSummary": {
+          "replicas": 1
+        },
+        "statusSummary": {
+          "replicas": 1,
+          "readyReplicas": 1,
+          "availableReplicas": 1,
+          "updatedReplicas": 1
+        },
+        "conditions": [
+          {
+            "type": "Available",
+            "status": "True"
+          }
+        ]
+      },
+      {
+        "id": "cls-5a6532fb1d5f:Deployment:default:checkout-api",
+        "clusterId": "cls-5a6532fb1d5f",
+        "kind": "Deployment",
+        "name": "checkout-api",
+        "namespace": "default",
+        "status": "0/1",
+        "health": "CRITICAL",
+        "createdAt": 1789032104909,
+        "updatedAt": 1789035704909,
+        "specSummary": {
+          "replicas": 1
+        },
+        "statusSummary": {
+          "replicas": 1,
+          "readyReplicas": 0,
+          "availableReplicas": 0,
+          "unavailableReplicas": 1
+        },
+        "conditions": [
+          {
+            "type": "Available",
+            "status": "False",
+            "reason": "MinimumReplicasUnavailable",
+            "message": "Deployment does not have minimum availability."
+          }
+        ]
+      },
+      {
+        "id": "cls-5a6532fb1d5f:Pod:kube-system:coredns-1",
+        "clusterId": "cls-5a6532fb1d5f",
+        "kind": "Pod",
+        "name": "coredns-7c65d6cfc9-4w2q1",
+        "namespace": "kube-system",
+        "nodeName": "node-control-plane",
+        "status": "Running",
+        "health": "HEALTHY",
+        "restartCount": 0,
+        "cpuUsage": 4.5,
+        "memoryUsage": 18.2,
+        "createdAt": 1788949304909,
+        "updatedAt": 1789035704909,
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ]
+      },
+      {
+        "id": "cls-5a6532fb1d5f:Pod:kube-system:coredns-2",
+        "clusterId": "cls-5a6532fb1d5f",
+        "kind": "Pod",
+        "name": "coredns-7c65d6cfc9-m9z8p",
+        "namespace": "kube-system",
+        "nodeName": "node-control-plane",
+        "status": "Running",
+        "health": "HEALTHY",
+        "restartCount": 0,
+        "cpuUsage": 4.2,
+        "memoryUsage": 17.9,
+        "createdAt": 1788949304909,
+        "updatedAt": 1789035704909,
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ]
+      },
+      {
+        "id": "cls-5a6532fb1d5f:Pod:kube-system:local-path",
+        "clusterId": "cls-5a6532fb1d5f",
+        "kind": "Pod",
+        "name": "local-path-provisioner-5d854-9k2lw",
+        "namespace": "kube-system",
+        "nodeName": "node-control-plane",
+        "status": "Running",
+        "health": "HEALTHY",
+        "restartCount": 0,
+        "cpuUsage": 2.1,
+        "memoryUsage": 14.5,
+        "createdAt": 1788949304909,
+        "updatedAt": 1789035704909,
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ]
+      },
+      {
+        "id": "cls-5a6532fb1d5f:Pod:kube-system:kube-proxy-1",
+        "clusterId": "cls-5a6532fb1d5f",
+        "kind": "Pod",
+        "name": "kube-proxy-8wz2b",
+        "namespace": "kube-system",
+        "nodeName": "node-control-plane",
+        "status": "Running",
+        "health": "HEALTHY",
+        "restartCount": 0,
+        "cpuUsage": 3.1,
+        "memoryUsage": 19.8,
+        "createdAt": 1788949304909,
+        "updatedAt": 1789035704909,
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ]
+      },
+      {
+        "id": "cls-5a6532fb1d5f:Pod:kube-system:kube-proxy-2",
+        "clusterId": "cls-5a6532fb1d5f",
+        "kind": "Pod",
+        "name": "kube-proxy-m4k91",
+        "namespace": "kube-system",
+        "nodeName": "node-worker-01",
+        "status": "Running",
+        "health": "HEALTHY",
+        "restartCount": 0,
+        "cpuUsage": 3.3,
+        "memoryUsage": 20.1,
+        "createdAt": 1788949304909,
+        "updatedAt": 1789035704909,
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ]
+      },
+      {
+        "id": "cls-5a6532fb1d5f:Pod:kube-system:flannel-1",
+        "clusterId": "cls-5a6532fb1d5f",
+        "kind": "Pod",
+        "name": "flannel-ds-9x4p1",
+        "namespace": "kube-system",
+        "nodeName": "node-control-plane",
+        "status": "Running",
+        "health": "HEALTHY",
+        "restartCount": 0,
+        "cpuUsage": 5.2,
+        "memoryUsage": 22.4,
+        "createdAt": 1788949304909,
+        "updatedAt": 1789035704909,
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ]
+      },
+      {
+        "id": "cls-5a6532fb1d5f:Pod:kube-system:flannel-2",
+        "clusterId": "cls-5a6532fb1d5f",
+        "kind": "Pod",
+        "name": "flannel-ds-k78d2",
+        "namespace": "kube-system",
+        "nodeName": "node-worker-01",
+        "status": "Running",
+        "health": "HEALTHY",
+        "restartCount": 0,
+        "cpuUsage": 5.4,
+        "memoryUsage": 23,
+        "createdAt": 1788949304909,
+        "updatedAt": 1789035704909,
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ]
+      },
+      {
+        "id": "cls-5a6532fb1d5f:Pod:skyops-agent:skyops-agent",
+        "clusterId": "cls-5a6532fb1d5f",
+        "kind": "Pod",
+        "name": "skyops-agent-6849bc54f8-9xj2p",
+        "namespace": "skyops-agent",
+        "nodeName": "node-worker-01",
+        "status": "Running",
+        "health": "HEALTHY",
+        "restartCount": 0,
+        "cpuUsage": 8.5,
+        "memoryUsage": 35.2,
+        "createdAt": 1788949304909,
+        "updatedAt": 1789035704909,
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ]
+      },
+      {
+        "id": "cls-5a6532fb1d5f:Pod:kube-system:metrics-server",
+        "clusterId": "cls-5a6532fb1d5f",
+        "kind": "Pod",
+        "name": "metrics-server-5847b85-48qkl",
+        "namespace": "kube-system",
+        "nodeName": "node-control-plane",
+        "status": "Running",
+        "health": "HEALTHY",
+        "restartCount": 0,
+        "cpuUsage": 6.1,
+        "memoryUsage": 25.8,
+        "createdAt": 1788949304909,
+        "updatedAt": 1789035704909,
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ]
+      },
+      {
+        "id": "cls-5a6532fb1d5f:Pod:kube-system:etcd",
+        "clusterId": "cls-5a6532fb1d5f",
+        "kind": "Pod",
+        "name": "etcd-node-control-plane",
+        "namespace": "kube-system",
+        "nodeName": "node-control-plane",
+        "status": "Running",
+        "health": "HEALTHY",
+        "restartCount": 0,
+        "cpuUsage": 15.2,
+        "memoryUsage": 82.1,
+        "createdAt": 1788949304909,
+        "updatedAt": 1789035704909,
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ]
+      },
+      {
+        "id": "cls-5a6532fb1d5f:Pod:kube-system:kube-apiserver",
+        "clusterId": "cls-5a6532fb1d5f",
+        "kind": "Pod",
+        "name": "kube-apiserver-node-control-plane",
+        "namespace": "kube-system",
+        "nodeName": "node-control-plane",
+        "status": "Running",
+        "health": "HEALTHY",
+        "restartCount": 0,
+        "cpuUsage": 22.8,
+        "memoryUsage": 120.4,
+        "createdAt": 1788949304909,
+        "updatedAt": 1789035704909,
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ]
+      },
+      {
+        "id": "cls-5a6532fb1d5f:Pod:kube-system:kube-controller",
+        "clusterId": "cls-5a6532fb1d5f",
+        "kind": "Pod",
+        "name": "kube-controller-manager-node-control-plane",
+        "namespace": "kube-system",
+        "nodeName": "node-control-plane",
+        "status": "Running",
+        "health": "HEALTHY",
+        "restartCount": 0,
+        "cpuUsage": 14.3,
+        "memoryUsage": 64.7,
+        "createdAt": 1788949304909,
+        "updatedAt": 1789035704909,
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ]
+      },
+      {
+        "id": "cls-5a6532fb1d5f:Pod:default:checkout-api-failing",
+        "clusterId": "cls-5a6532fb1d5f",
+        "kind": "Pod",
+        "name": "checkout-api-7b89f6d4d-x98pk",
+        "namespace": "default",
+        "nodeName": "node-worker-01",
+        "status": "CrashLoopBackOff",
+        "health": "CRITICAL",
+        "restartCount": 14,
+        "cpuUsage": 0.1,
+        "memoryUsage": 12,
+        "createdAt": 1789032104909,
+        "updatedAt": 1789035704909,
+        "containers": [
+          {
+            "name": "checkout-api",
+            "image": "registry.internal.io/checkout:v2.1",
+            "ready": false,
+            "restartCount": 14,
+            "state": "waiting",
+            "waitingReason": "CrashLoopBackOff",
+            "waitingMessage": "Back-off 5m0s restarting failed container checkout-api pod checkout-api-7b89f6d4d-x98pk"
+          }
+        ],
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "False",
+            "reason": "ContainersNotReady",
+            "message": "containers with unready status: [checkout-api]"
+          }
+        ],
+        "events": [
+          {
+            "id": "evt-cls-5a6532fb1d5f-1",
+            "type": "Warning",
+            "reason": "BackOff",
+            "message": "Back-off restarting failed container",
+            "timestamp": 1789035584909,
+            "objectKind": "Pod",
+            "objectName": "checkout-api-7b89f6d4d-x98pk",
+            "namespace": "default"
+          }
+        ]
+      }
+    ],
+    "cls-a1a745aadec4": [],
+    "cls-71d4484f17c8": [],
+    "cls-31a850b02e33": [],
+    "cls-96d308f392fe": [
+      {
+        "kind": "Node",
+        "name": "k8s-node-worker-01",
+        "status": "Ready",
+        "health": "HEALTHY",
+        "createdAt": 1787595400610,
+        "updatedAt": 1787595500610,
+        "statusSummary": {
+          "kubeletVersion": "v1.32.1",
+          "osImage": "Ubuntu 24.04 LTS"
+        }
+      },
+      {
+        "kind": "Node",
+        "name": "k8s-node-worker-02",
+        "status": "Ready",
+        "health": "HEALTHY",
+        "createdAt": 1787595400610,
+        "updatedAt": 1787595500610,
+        "statusSummary": {
+          "kubeletVersion": "v1.32.1",
+          "osImage": "Ubuntu 24.04 LTS"
+        }
+      },
+      {
+        "kind": "Pod",
+        "namespace": "kube-system",
+        "name": "coredns-7c65d6cfc9-abc12",
+        "status": "Running",
+        "health": "HEALTHY",
+        "createdAt": 1787595450610,
+        "updatedAt": 1787595500610,
+        "specSummary": {
+          "nodeName": "k8s-node-worker-01"
+        },
+        "containers": [
+          {
+            "name": "coredns",
+            "image": "registry.k8s.io/coredns/coredns:v1.11.3",
+            "ready": true,
+            "restartCount": 0,
+            "state": "running"
+          }
+        ]
+      },
+      {
+        "kind": "Pod",
+        "namespace": "default",
+        "name": "frontend-app-6d8b9f7cb-xyz99",
+        "status": "Running",
+        "health": "HEALTHY",
+        "createdAt": 1787595480610,
+        "updatedAt": 1787595500610,
+        "specSummary": {
+          "nodeName": "k8s-node-worker-02"
+        },
+        "containers": [
+          {
+            "name": "web",
+            "image": "nginx:alpine",
+            "ready": true,
+            "restartCount": 0,
+            "state": "running"
+          }
+        ]
+      },
+      {
+        "kind": "Deployment",
+        "namespace": "default",
+        "name": "frontend-app",
+        "status": "1/1 Ready",
+        "health": "HEALTHY",
+        "createdAt": 1787595480610,
+        "updatedAt": 1787595500610,
+        "specSummary": {
+          "replicas": 1
+        },
+        "statusSummary": {
+          "replicas": 1,
+          "readyReplicas": 1,
+          "availableReplicas": 1
+        }
+      }
+    ],
+    "cls-ea233f047272": [],
+    "cls-603f23ba3c5a": [],
+    "cls-91a80cb2a4a5": []
+  },
+  "incidents": {
+    "SKY-1001": {
+      "id": "SKY-1001",
+      "fingerprint": "c24c2713b0b2e7589cfc6648195c9360f24506d1c8179f29996cba1e994ad1e4",
+      "orgId": "org-0890c5036a3e",
+      "clusterId": "cls-5a6532fb1d5f",
+      "clusterName": "killercoda-prod-test",
+      "namespace": "default",
+      "resourceKind": "Deployment",
+      "resourceName": "checkout-api",
+      "incidentType": "DeploymentDegraded",
+      "title": "Deployment checkout-api is degraded (0/1 ready)",
+      "severity": "CRITICAL",
+      "confidence": "HIGH",
+      "status": "OPEN",
+      "occurrenceCount": 1,
+      "firstSeenAt": 1789035704914,
+      "lastSeenAt": 1789035704914,
+      "technicalDetails": {
+        "desiredReplicas": 1,
+        "availableReplicas": 0,
+        "readyReplicas": 0,
+        "updatedReplicas": 0,
+        "reason": "DeploymentUnavailable",
+        "message": "Expected 1 ready replicas, but currently only 0 are ready.",
+        "conditions": [
+          {
+            "type": "Available",
+            "status": "False",
+            "reason": "MinimumReplicasUnavailable",
+            "message": "Deployment does not have minimum availability."
+          }
+        ],
+        "events": [],
+        "resourceUid": "cls-5a6532fb1d5f:Deployment:default:checkout-api",
+        "observedState": "0/1",
+        "rootCause": "Deployment does not currently have the requested available replicas.",
+        "rootCauseCategory": "UNDETERMINED",
+        "impact": "The affected workload or infrastructure component is unavailable or degraded.",
+        "recommendation": "Inspect owned ReplicaSets and Pods to identify the blocking workload failure.",
+        "recommendedAction": "Inspect owned ReplicaSets and Pods to identify the blocking workload failure.",
+        "confidence": "HIGH",
+        "relatedResources": [],
+        "evidence": [
+          {
+            "source": "kubernetes-status",
+            "reason": "DeploymentUnavailable",
+            "message": "Expected 1 ready replicas, but currently only 0 are ready."
+          }
+        ]
+      },
+      "updatedAt": 1789035704914
+    }
+  },
+  "incidentTimeline": {
+    "SKY-1001": [
+      {
+        "id": "evt-448e4964dead",
+        "incidentId": "SKY-1001",
+        "timestamp": 1789035704915,
+        "type": "DETECTION",
+        "actor": {
+          "type": "SYSTEM",
+          "name": "SkyOps Engine"
+        },
+        "description": "Incident created: Deployment checkout-api is degraded (0/1 ready)"
+      }
+    ]
+  },
+  "incidentNotes": {
+    "SKY-1001": []
+  },
+  "remediationActions": {},
+  "remediations": {},
+  "aiAnalyses": {},
+  "policies": {},
+  "incidentFailures": {},
+  "incidentCounter": 1002
+}
