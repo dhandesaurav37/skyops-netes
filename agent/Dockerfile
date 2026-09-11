@@ -1,6 +1,8 @@
-# Stage 1: Build the static Go binary
-FROM golang:1.22-alpine AS builder
+# Stage 1: Build the static Go binary with native cross-compilation
+FROM --platform=$BUILDPLATFORM golang:1.22-alpine AS builder
 
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
 ARG VERSION=v1.5.0
 
 WORKDIR /src
@@ -16,7 +18,7 @@ RUN go mod download
 COPY . .
 
 # Compile self-contained, statically linked binary for target architecture
-RUN CGO_ENABLED=0 go build \
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
     -trimpath \
     -ldflags="-s -w -X main.Version=${VERSION}" \
     -o /out/skyops-agent \

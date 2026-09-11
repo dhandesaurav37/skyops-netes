@@ -59,6 +59,10 @@ jobs:
     name: Build & Publish Container Image
     needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      actions: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -79,6 +83,17 @@ jobs:
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "Building SkyOps Agent version: ${VERSION}"
 
+      - name: Resolve Lowercase Target Image
+        id: image_info
+        run: |
+          RAW_IMAGE="${{ env.IMAGE_NAME }}"
+          if [ -z "$RAW_IMAGE" ]; then
+            RAW_IMAGE="${{ github.repository_owner }}/skyops-agent"
+          fi
+          LOWERCASE_IMAGE=$(echo "$RAW_IMAGE" | tr '[:upper:]' '[:lower:]')
+          echo "image=${LOWERCASE_IMAGE}" >> $GITHUB_OUTPUT
+          echo "Resolved target container image: ${{ env.REGISTRY }}/${LOWERCASE_IMAGE}"
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -91,13 +106,13 @@ jobs:
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          password: ${{ secrets.GHCR_TOKEN || secrets.CR_PAT || secrets.GITHUB_TOKEN }}
 
       - name: Extract Docker metadata and tags
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/${{ steps.image_info.outputs.image }}
           tags: |
             # Tag with Git Commit SHA
             type=sha,format=short,prefix=sha-
@@ -120,5 +135,6 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          provenance: false
           cache-from: type=gha
           cache-to: type=gha,mode=max

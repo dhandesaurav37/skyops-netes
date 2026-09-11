@@ -24,3 +24,4 @@ coverage/
 *serviceAccountKey*.json
 secrets/
 *.secret
+firebase-applet-config.json
