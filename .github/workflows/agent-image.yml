@@ -27,7 +27,7 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: skyops-software-solutions/skyops-agent
+  IMAGE_NAME: dhandesaurav37/skyops-agent
 
 jobs:
   test:
