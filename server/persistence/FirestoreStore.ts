@@ -36,7 +36,8 @@ import {
 import { ClusterResourcesRecord, ClusterTokenRecord, IPersistenceStore } from './types';
 import fallbackConfig from '../firebaseAppletConfig';
 
-let hasLoggedGlobalQuotaWarning = false;
+// Kept as exported diagnostics for callers/tests. Firestore failures are never
+// converted into empty results or successful writes: this store is authoritative.
 export function isGlobalQuotaError(err: any): boolean {
   if (!err) return false;
   const msg = err?.message || String(err);
@@ -51,64 +52,27 @@ export function isGlobalQuotaError(err: any): boolean {
 }
 
 export function logGlobalQuotaWarningOnce(op: string): void {
-  if (!hasLoggedGlobalQuotaWarning) {
-    hasLoggedGlobalQuotaWarning = true;
-    console.warn(
-      `[FirestoreStore] Cloud Firestore free tier daily quota reached (${op}). Seamlessly operating with local memory & disk snapshot store.`
-    );
-  }
+  console.error(`[FirestoreStore] Firestore quota/resource failure during ${op}; operation failed and was propagated.`);
 }
 
 class DocRefWrapper {
   constructor(public docRef: DocumentReference, public id: string) {}
 
   public async get(): Promise<{ exists: boolean; data: () => any }> {
-    try {
-      const snap = await this.docRef.get();
-      return { exists: snap.exists, data: () => snap.data() };
-    } catch (err: any) {
-      if (isGlobalQuotaError(err)) {
-        logGlobalQuotaWarningOnce('DocRefWrapper.get');
-        return { exists: false, data: () => undefined };
-      }
-      throw err;
-    }
+    const snap = await this.docRef.get();
+    return { exists: snap.exists, data: () => snap.data() };
   }
 
   public async set(data: any, options?: { merge?: boolean }): Promise<void> {
-    try {
-      await this.docRef.set(data, options || {});
-    } catch (err: any) {
-      if (isGlobalQuotaError(err)) {
-        logGlobalQuotaWarningOnce('DocRefWrapper.set');
-        return;
-      }
-      throw err;
-    }
+    await this.docRef.set(data, options || {});
   }
 
   public async update(data: any): Promise<void> {
-    try {
-      await this.docRef.update(data);
-    } catch (err: any) {
-      if (isGlobalQuotaError(err)) {
-        logGlobalQuotaWarningOnce('DocRefWrapper.update');
-        return;
-      }
-      throw err;
-    }
+    await this.docRef.update(data);
   }
 
   public async delete(): Promise<void> {
-    try {
-      await this.docRef.delete();
-    } catch (err: any) {
-      if (isGlobalQuotaError(err)) {
-        logGlobalQuotaWarningOnce('DocRefWrapper.delete');
-        return;
-      }
-      throw err;
-    }
+    await this.docRef.delete();
   }
 }
 
@@ -138,26 +102,18 @@ class CollectionRefWrapper {
     size: number;
     docs: Array<{ id: string; ref: DocRefWrapper; data: () => any }>;
   }> {
-    try {
-      const colRef = this.db.collection(this.name);
-      const q = this.constraints.reduce((current, apply) => apply(current), colRef as Query);
-      const snap = await q.get();
-      return {
-        empty: snap.empty,
-        size: snap.size,
-        docs: snap.docs.map((d: any) => ({
-          id: d.id,
-          ref: new DocRefWrapper(d.ref, d.id),
-          data: () => d.data()
-        }))
-      };
-    } catch (err: any) {
-      if (isGlobalQuotaError(err)) {
-        logGlobalQuotaWarningOnce(`CollectionRefWrapper.get(${this.name})`);
-        return { empty: true, size: 0, docs: [] };
-      }
-      throw err;
-    }
+    const colRef = this.db.collection(this.name);
+    const q = this.constraints.reduce((current, apply) => apply(current), colRef as Query);
+    const snap = await q.get();
+    return {
+      empty: snap.empty,
+      size: snap.size,
+      docs: snap.docs.map((d: any) => ({
+        id: d.id,
+        ref: new DocRefWrapper(d.ref, d.id),
+        data: () => d.data()
+      }))
+    };
   }
 }
 
@@ -175,15 +131,7 @@ class BatchWrapper {
     this.batch.delete(ref);
   }
   public async commit(): Promise<void> {
-    try {
-      await this.batch.commit();
-    } catch (err: any) {
-      if (isGlobalQuotaError(err)) {
-        logGlobalQuotaWarningOnce('BatchWrapper.commit');
-        return;
-      }
-      throw err;
-    }
+    await this.batch.commit();
   }
 }
 
@@ -329,10 +277,8 @@ export class FirestoreStore implements IPersistenceStore {
       if (!snap.exists) return null;
       return snap.data() as User;
     } catch (err: any) {
-      if (this.isQuotaError(err)) {
-        this.logQuotaWarningOnce('getUser');
-        return null;
-      }
+      // Quota/resource exhaustion is a failed authoritative operation.
+      throw err;
       throw err;
     }
   }
@@ -344,10 +290,8 @@ export class FirestoreStore implements IPersistenceStore {
       await docRef.set(this.sanitize(user), { merge: true });
       return user;
     } catch (err: any) {
-      if (this.isQuotaError(err)) {
-        this.logQuotaWarningOnce('upsertUser');
-        return user;
-      }
+      // Quota/resource exhaustion is a failed authoritative operation.
+      throw err;
       throw err;
     }
   }
@@ -359,10 +303,8 @@ export class FirestoreStore implements IPersistenceStore {
       const docs = snap.docs.map((d) => d.data() as User);
       return docs;
     } catch (err: any) {
-      if (this.isQuotaError(err)) {
-        this.logQuotaWarningOnce('listUsers');
-        return [];
-      }
+      // Quota/resource exhaustion is a failed authoritative operation.
+      throw err;
       throw err;
     }
   }
@@ -375,10 +317,8 @@ export class FirestoreStore implements IPersistenceStore {
       if (!snap.exists) return null;
       return snap.data() as UserNotificationSettings;
     } catch (err: any) {
-      if (this.isQuotaError(err)) {
-        this.logQuotaWarningOnce('getUserNotificationSettings');
-        return null;
-      }
+      // Quota/resource exhaustion is a failed authoritative operation.
+      throw err;
       throw err;
     }
   }
@@ -391,10 +331,8 @@ export class FirestoreStore implements IPersistenceStore {
         .doc(userId)
         .set(this.sanitize({ ...settings, updatedAt: Date.now() }), { merge: true });
     } catch (err: any) {
-      if (this.isQuotaError(err)) {
-        this.logQuotaWarningOnce('saveUserNotificationSettings');
-        return;
-      }
+      // Quota/resource exhaustion is a failed authoritative operation.
+      throw err;
       throw err;
     }
   }
@@ -407,10 +345,8 @@ export class FirestoreStore implements IPersistenceStore {
       if (!snap.exists) return null;
       return snap.data() as Organization;
     } catch (err: any) {
-      if (this.isQuotaError(err)) {
-        this.logQuotaWarningOnce('getOrganization');
-        return null;
-      }
+      // Quota/resource exhaustion is a failed authoritative operation.
+      throw err;
       throw err;
     }
   }
@@ -426,10 +362,8 @@ export class FirestoreStore implements IPersistenceStore {
       await docRef.set(this.sanitize(payload), { merge: true });
       return payload;
     } catch (err: any) {
-      if (this.isQuotaError(err)) {
-        this.logQuotaWarningOnce('upsertOrganization');
-        return org;
-      }
+      // Quota/resource exhaustion is a failed authoritative operation.
+      throw err;
       throw err;
     }
   }
@@ -470,10 +404,8 @@ export class FirestoreStore implements IPersistenceStore {
       const docs = snap.docs.map((d) => d.data() as OrgMember);
       return docs;
     } catch (err: any) {
-      if (this.isQuotaError(err)) {
-        this.logQuotaWarningOnce('getOrgMembers');
-        return [];
-      }
+      // Quota/resource exhaustion is a failed authoritative operation.
+      throw err;
       throw err;
     }
   }
@@ -488,10 +420,8 @@ export class FirestoreStore implements IPersistenceStore {
       }
       await batch.commit();
     } catch (err: any) {
-      if (this.isQuotaError(err)) {
-        this.logQuotaWarningOnce('setOrgMembers');
-        return;
-      }
+      // Quota/resource exhaustion is a failed authoritative operation.
+      throw err;
       throw err;
     }
   }
@@ -504,10 +434,8 @@ export class FirestoreStore implements IPersistenceStore {
       await this.firestore.collection('memberships').doc(docId).set(payload, { merge: true });
       return member;
     } catch (err: any) {
-      if (this.isQuotaError(err)) {
-        this.logQuotaWarningOnce('addOrgMember');
-        return member;
-      }
+      // Quota/resource exhaustion is a failed authoritative operation.
+      throw err;
       throw err;
     }
   }
@@ -519,10 +447,8 @@ export class FirestoreStore implements IPersistenceStore {
       await this.firestore.collection('memberships').doc(docId).delete();
       return true;
     } catch (err: any) {
-      if (this.isQuotaError(err)) {
-        this.logQuotaWarningOnce('removeOrgMember');
-        return true;
-      }
+      // Quota/resource exhaustion is a failed authoritative operation.
+      throw err;
       throw err;
     }
   }
@@ -548,10 +474,8 @@ export class FirestoreStore implements IPersistenceStore {
       }
       return orgs;
     } catch (err: any) {
-      if (this.isQuotaError(err)) {
-        this.logQuotaWarningOnce('getUserOrganizations');
-        return [];
-      }
+      // Quota/resource exhaustion is a failed authoritative operation.
+      throw err;
       throw err;
     }
   }
@@ -1084,19 +1008,11 @@ export class FirestoreStore implements IPersistenceStore {
   // --- Audit Events ---
   public async recordAuditEvent(event: AuditEvent): Promise<AuditEvent> {
     await this.ensureConnected();
-    try {
-      await this.firestore
+    await this.firestore
         .collection('auditEvents')
         .doc(event.id)
         .set(this.sanitize(event), { merge: true });
-      return event;
-    } catch (err: any) {
-      if (this.isQuotaError(err)) {
-        this.logQuotaWarningOnce('recordAuditEvent');
-        return event;
-      }
-      throw err;
-    }
+    return event;
   }
 
   public async queryAuditEvents(filters: AuditQueryFilters): Promise<PaginatedResult<AuditEvent>> {

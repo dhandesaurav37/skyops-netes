@@ -243,7 +243,8 @@ export class DataStore {
             if (members && members.length > 0) {
               this.members.set(org.id, members);
             }
-          } catch {
+          } catch (err) {
+            if (process.env.NODE_ENV === 'production') throw err;
             // retain existing members if available
           }
 
@@ -252,7 +253,8 @@ export class DataStore {
             if (sub) {
               this.subscriptions.set(org.id, sub);
             }
-          } catch {
+          } catch (err) {
+            if (process.env.NODE_ENV === 'production') throw err;
             // retain existing subscription
           }
         }
@@ -279,7 +281,8 @@ export class DataStore {
             if (Array.isArray(persistedResources) && persistedResources.length > 0) {
               this.resources.set(cluster.id, persistedResources);
             }
-          } catch {
+          } catch (err) {
+            if (process.env.NODE_ENV === 'production') throw err;
             // retain in-memory resources
           }
         }
@@ -294,6 +297,9 @@ export class DataStore {
           `[DataStore] Hydrated authoritative Firestore state: ${this.orgs.size} orgs, ${this.users.size} users, ${this.clusters.size} clusters (${this.clusterTokens.size} active tokens), ${this.incidents.size} incidents.`
         );
       } catch (err: any) {
+        if (process.env.NODE_ENV === 'production') {
+          throw new Error(`[DataStore] Authoritative Firestore hydration failed; refusing to serve partial tenant state: ${err?.message || err}`);
+        }
         if (isGlobalQuotaError(err) || err?.message?.includes('Quota') || err?.message?.includes('quota')) {
           console.warn(
             `[DataStore] Firestore daily read/write quota limit reached during hydration. Operating with resilient local snapshot cache (${this.orgs.size} orgs, ${this.clusters.size} clusters, ${this.users.size} users).`
@@ -1613,8 +1619,12 @@ export class DataStore {
 
   // --- Cluster Management ---
   private getAgentTokenEncryptionKey(): Buffer {
+    const configuredKey = process.env.SKYOPS_AGENT_TOKEN_ENCRYPTION_KEY;
+    if (process.env.NODE_ENV === 'production' && (!configuredKey || configuredKey.length < 32)) {
+      throw new Error('[DataStore] SKYOPS_AGENT_TOKEN_ENCRYPTION_KEY must be configured with at least 32 characters in production.');
+    }
     const secret =
-      process.env.SKYOPS_AGENT_TOKEN_ENCRYPTION_KEY ||
+      configuredKey ||
       process.env.SKYOPS_FIRESTORE_PROJECT_ID ||
       process.env.FIREBASE_PROJECT_ID ||
       'skyops-agent-token-key';

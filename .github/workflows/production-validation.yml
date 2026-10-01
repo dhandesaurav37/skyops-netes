@@ -1,0 +1,48 @@
+name: Production validation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  application:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: bun install --frozen-lockfile
+      - run: bun run lint
+      - run: bun test
+      - run: bun run build
+      - name: Check Firestore and Storage rules remain restrictive
+        run: |
+          ! rg -n 'allow\s+(read|write)\s*:\s*if\s+true\b' firestore.rules storage.rules
+          rg -q 'allow read, write: if false' firestore.rules
+          rg -q 'allow read, write: if false' storage.rules
+      - name: Firestore and Storage emulator rules tests
+        run: npx --yes firebase-tools emulators:exec --project demo-skyops --only firestore,storage 'bun run test -- server/firestore_rules.test.ts server/storage.test.ts'
+
+  agent:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: agent/go.sum
+      - run: go test -race ./...
+      - run: go vet ./...
+      - run: go build ./...

@@ -121,7 +121,8 @@ class InMemoryJobQueue {
         this.sortQueue();
       } else {
         job.status = 'FAILED';
-        this.queue.splice(readyIdx, 1);
+        // Keep terminal failures visible for diagnostics. This in-memory queue
+        // is ephemeral and must not be treated as durable production delivery.
         systemObservability.updateJobQueue(this.queue.length, 0, 1);
       }
     } finally {
@@ -137,6 +138,18 @@ class InMemoryJobQueue {
     if (this.intervalTimer) {
       clearInterval(this.intervalTimer);
       this.intervalTimer = null;
+    }
+  }
+
+  /** Stop polling and allow the currently executing handler to settle. */
+  public async shutdown(timeoutMs = 10000): Promise<void> {
+    this.stop();
+    const deadline = Date.now() + timeoutMs;
+    while (this.isProcessing && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    if (this.isProcessing) {
+      throw new Error('Job queue shutdown timed out while a handler was still running.');
     }
   }
 }

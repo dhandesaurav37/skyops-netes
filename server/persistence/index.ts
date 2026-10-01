@@ -121,6 +121,7 @@ export async function verifyProductionPersistence(): Promise<void> {
   try {
     await store.init();
   } catch (err: any) {
+    if (isProd) throw new Error(`[Persistence] Production Firestore health probe failed: ${err?.message || err}`);
     console.warn(`[Persistence] Notice: Initial store probe: ${err?.message || err}`);
   }
 }
