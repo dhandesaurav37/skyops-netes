@@ -666,11 +666,9 @@ export class DataStore {
 
   public getOrganizationsForUser(userId: string, userEmail?: string): Organization[] {
     const userOrgs: Organization[] = [];
-    const normalizedEmail = userEmail?.trim().toLowerCase();
     for (const [orgId, members] of this.members.entries()) {
       const match = members.find(
-        (m) =>
-          (m.userId === userId || (normalizedEmail && m.email && m.email.trim().toLowerCase() === normalizedEmail)) &&
+        (m) => m.userId === userId &&
           m.status !== 'SUSPENDED' &&
           m.status !== 'REMOVED'
       );
@@ -692,7 +690,7 @@ export class DataStore {
           orgMembers = [];
           this.members.set(org.id, orgMembers);
         }
-        if (!orgMembers.some((m) => m.userId === userId || (normalizedEmail && m.email?.toLowerCase() === normalizedEmail))) {
+        if (!orgMembers.some((m) => m.userId === userId)) {
           orgMembers.push({
             userId,
             orgId: org.id,
@@ -969,12 +967,9 @@ export class DataStore {
       }
     }
     const orgMembers = this.members.get(resolvedOrgId) || [];
-    const normalizedEmail = userEmail?.trim().toLowerCase();
-    const member = orgMembers.find(
-      (m) => m.userId === userId || (normalizedEmail && m.email && m.email.trim().toLowerCase() === normalizedEmail)
-    );
+    const member = orgMembers.find((m) => m.userId === userId);
     if (!member) {
-      if (org && (org.ownerUserId === userId || (normalizedEmail && (org as any).ownerEmail && (org as any).ownerEmail.trim().toLowerCase() === normalizedEmail))) {
+      if (org && org.ownerUserId === userId) {
         const ownerMember: OrgMember = {
           userId,
           orgId: resolvedOrgId,

@@ -1,6 +1,8 @@
 import { NextFunction, Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import https from 'https';
+import { getApps, initializeApp, applicationDefault } from 'firebase-admin/app';
+import { getAuth } from 'firebase-admin/auth';
 import { store } from './store';
 import { Role } from '../src/types/index';
 import { config, isProduction } from './config';
@@ -84,6 +86,28 @@ export async function verifyFirebaseIdToken(rawToken: string, projectId: string)
       name,
       emailVerified: true
     };
+  }
+
+  // Firebase Auth Emulator issues local test JWTs that are not signed by Google's
+  // production certificate chain. Accept them only in development with an explicit
+  // loopback emulator setting; this path is impossible in production.
+  const emulatorHost = process.env.FIREBASE_AUTH_EMULATOR_HOST || '';
+  if (config.NODE_ENV === 'development' && /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(emulatorHost)) {
+    try {
+      const adminApp = getApps()[0] || initializeApp({ projectId, credential: applicationDefault() });
+      const emulatorToken = await getAuth(adminApp).verifyIdToken(rawToken);
+      const emulatorUid = emulatorToken.uid;
+      if (emulatorUid) {
+      return {
+        id: emulatorUid,
+        email: emulatorToken.email || `${emulatorUid}@users.skyops.internal`,
+        name: emulatorToken.name || emulatorToken.email?.split('@')[0] || emulatorUid,
+        emailVerified: emulatorToken.email_verified
+      };
+      }
+    } catch {
+      throw new Error('Invalid Firebase Auth Emulator ID token');
+    }
   }
 
   const decodedUnverified = jwt.decode(rawToken, { complete: true }) as {
@@ -240,31 +264,12 @@ export async function requireOrgMembership(
     }
   }
 
-  if (userOrgs.length === 0 && requestedOrgId) {
-    const existingOrg = store.getOrganization(requestedOrgId);
-    if (existingOrg) {
-      const existingMembers = store.getOrgMembers(existingOrg.id);
-      const isOwner = existingOrg.ownerUserId === req.user.id || (req.user.email && existingOrg.ownerUserId === req.user.email);
-      const isMember = existingMembers.some((m) => m.userId === req.user.id || (req.user.email && m.email === req.user.email));
-      if (isOwner || isMember || existingMembers.length === 0) {
-        userOrgs = [existingOrg];
-      }
-    }
-  }
-
   if (userOrgs.length === 0) {
-    for (const org of store.getAllOrganizations()) {
-      if (
-        org.ownerUserId === req.user.id ||
-        (req.user.email && org.ownerUserId === req.user.email) ||
-        (req.user.email && org.name.toLowerCase().includes(req.user.email.split('@')[0].toLowerCase()))
-      ) {
-        userOrgs.push(org);
-      }
+    // A newly authenticated user may receive a personal workspace, but an explicitly
+    // requested existing organization is never inferred from an empty membership set.
+    if (requestedOrgId && store.getOrganization(requestedOrgId)) {
+      return res.status(403).json({ error: 'Organization membership required', code: 'ORG_ACCESS_DENIED' });
     }
-  }
-
-  if (userOrgs.length === 0) {
     // Auto-bootstrap personal workspace for new tenant
     const userWorkspaceName = req.user.name ? `${req.user.name.split(' ')[0]}'s Workspace` : 'Primary Workspace';
     const newOrg = store.createOrganization(userWorkspaceName, req.user.id, req.user.email, req.user.name);

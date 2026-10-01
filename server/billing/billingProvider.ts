@@ -45,7 +45,7 @@ export interface BillingProvider {
 export class MockBillingProvider implements BillingProvider {
   public readonly name: BillingProviderType = 'mock';
   private sessions: Map<string, ProviderCheckoutSession> = new Map();
-  private readonly defaultSecret: string = process.env.BILLING_WEBHOOK_SECRET || 'skyops_mock_wh_sec_984f87a3e21';
+  private readonly defaultSecret: string = process.env.BILLING_WEBHOOK_SECRET || crypto.randomBytes(32).toString('hex');
 
   async createCustomer(orgId: string, orgName: string, email: string): Promise<{ customerId: string }> {
     const customerId = `cust_sky_${orgId.substring(0, 8)}_${crypto.randomBytes(4).toString('hex')}`;

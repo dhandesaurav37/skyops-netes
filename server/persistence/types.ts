@@ -147,6 +147,7 @@ export interface IPersistenceStore {
 
   // --- Webhooks ---
   getWebhook(webhookId: string, orgId?: string): Promise<WebhookConfig | null>;
+  listAllWebhooks(): Promise<WebhookConfig[]>;
   listWebhooks(orgId: string): Promise<WebhookConfig[]>;
   saveWebhook(webhook: WebhookConfig): Promise<WebhookConfig>;
   deleteWebhook(webhookId: string, orgId: string): Promise<boolean>;
@@ -154,6 +155,7 @@ export interface IPersistenceStore {
   // --- Webhook Deliveries ---
   recordWebhookDelivery(delivery: WebhookDeliveryRecord): Promise<WebhookDeliveryRecord>;
   listWebhookDeliveries(orgId: string, webhookId?: string, limit?: number): Promise<WebhookDeliveryRecord[]>;
+  listAllWebhookDeliveries(limit?: number): Promise<WebhookDeliveryRecord[]>;
 
   // --- Subscriptions & Invoices ---
   getSubscription(orgId: string): Promise<Subscription | null>;

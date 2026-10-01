@@ -201,6 +201,54 @@ export class RazorpayBillingProvider implements BillingProvider {
     return false;
   }
 
+  public async verifyPaymentForCheckout(input: {
+    orderId?: string;
+    subscriptionId?: string;
+    paymentId: string;
+    signature: string;
+    orgId: string;
+    planId: PlanId;
+    billingInterval: BillingInterval;
+    expectedAmount: number;
+  }): Promise<boolean> {
+    if (!this.verifyPaymentSignature({
+      orderId: input.orderId,
+      subscriptionId: input.subscriptionId,
+      paymentId: input.paymentId,
+      signature: input.signature
+    })) return false;
+
+    try {
+      const client = this.getClient();
+      const payment: any = await (client as any).payments.fetch(input.paymentId);
+      if (payment.status !== 'captured' || payment.currency !== 'INR') return false;
+
+      const expectedPlanId = `${input.planId}_${input.billingInterval}`.toUpperCase();
+      if (input.orderId) {
+        const order: any = await (client as any).orders.fetch(input.orderId);
+        return payment.order_id === order.id && order.status !== 'attempted' &&
+          order.amount === Math.round(input.expectedAmount * 100) &&
+          order.notes?.orgId === input.orgId &&
+          order.notes?.planId === input.planId &&
+          order.notes?.billingInterval === input.billingInterval;
+      }
+
+      if (input.subscriptionId) {
+        const subscription: any = await (client as any).subscriptions.fetch(input.subscriptionId);
+        const configuredPlanId = process.env[`RAZORPAY_${expectedPlanId}_PLAN_ID`];
+        return payment.subscription_id === subscription.id &&
+          subscription.plan_id === configuredPlanId &&
+          subscription.notes?.orgId === input.orgId &&
+          subscription.notes?.planId === input.planId &&
+          subscription.notes?.billingInterval === input.billingInterval;
+      }
+      return false;
+    } catch (error) {
+      console.warn('[Razorpay] Payment/order verification lookup failed');
+      return false;
+    }
+  }
+
   public async getSubscription(providerSubscriptionId: string): Promise<Partial<Subscription> | null> {
     return {
       providerSubscriptionId,
@@ -266,7 +314,7 @@ export class RazorpayBillingProvider implements BillingProvider {
       const expBuf = Buffer.from(expectedSig, 'hex');
       const isMatching = sigBuf.length === expBuf.length && crypto.timingSafeEqual(sigBuf, expBuf);
 
-      if (!isMatching && signature !== 'test_bypass_token') {
+      if (!isMatching && !(process.env.NODE_ENV === 'test' && signature === 'test_bypass_token')) {
         return { valid: false, error: 'Invalid Razorpay HMAC signature' };
       }
 

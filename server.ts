@@ -77,7 +77,12 @@ app.use(
 
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  if (isProduction) {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
   next();
 });
 
@@ -502,6 +507,9 @@ const AcceptInvitationSchema = z.object({
 });
 
 app.post('/api/v1/invitations/accept', requireUserAuth, (req: AuthenticatedUserRequest, res) => {
+  if (req.user?.emailVerified !== true) {
+    return res.status(403).json({ error: 'Verify your email before accepting an organization invitation', code: 'EMAIL_VERIFICATION_REQUIRED' });
+  }
   const parsed = AcceptInvitationSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: 'Invalid invitation acceptance payload' });
@@ -761,6 +769,8 @@ app.get('/api/v1/clusters/:id/manifests', requireUserAuth, requireOrgMembership,
 // Single-command bash installer endpoint:
 // curl -fsSL "https://<SKYOPS-HOST>/api/v1/install/<SESSION_KEY>" | bash
 const handleScriptInstall = async (req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store, private');
+  res.setHeader('Pragma', 'no-cache');
   const { sessionKey } = req.params;
   const cluster = store.getClusterByInstallKey(sessionKey);
   if (!cluster) {
@@ -799,6 +809,8 @@ const handleScriptInstall = async (req: Request, res: Response) => {
 // Raw YAML manifest endpoint for:
 // kubectl apply -f "https://<SKYOPS-HOST>/api/v1/install/<SESSION_KEY>/manifest.yaml"
 const handleManifestBySession = async (req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store, private');
+  res.setHeader('Pragma', 'no-cache');
   const { sessionKey } = req.params;
   const cluster = store.getClusterByInstallKey(sessionKey);
   if (!cluster) {
@@ -1382,7 +1394,7 @@ const ApproveImageReplacementSchema = z.object({
 });
 
 // Approval intentionally requires an authenticated engineer/admin/owner. It never mutates Kubernetes from the backend.
-app.post('/api/v1/incidents/:id/remediations/replace-pod-image/approve', requireUserAuth, requireOrgMembership, requireRole(['OWNER', 'ADMIN', 'ENGINEER']), (req: AuthenticatedUserRequest, res) => {
+app.post('/api/v1/incidents/:id/remediations/replace-pod-image/approve', requireUserAuth, requireOrgMembership, requirePermission(['remediation.approve', 'remediation.execute']), (req: AuthenticatedUserRequest, res) => {
   const parsed = ApproveImageReplacementSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid remediation approval' });
   try { res.status(201).json({ action: store.approvePodImageReplacement(req.params.id, req.orgId!, parsed.data, { id: req.user!.id, name: req.user!.name }) }); }
@@ -1735,9 +1747,76 @@ app.post('/api/v1/incidents/:id/ai-analysis', requireUserAuth, requireOrgMembers
 });
 
 // --- Architecture AI Explanation Endpoint ---
-app.post('/api/v1/architecture/explain', async (req: Request, res: Response) => {
+app.post('/api/v1/architecture/explain', requireUserAuth, requireOrgMembership, async (req: AuthenticatedUserRequest, res: Response) => {
   try {
-    const payload = req.body || {};
+    const payload = req.body && typeof req.body === 'object' ? { ...req.body } : {};
+    if (!['cluster', 'domain', 'resource'].includes(payload.targetType)) payload.targetType = 'cluster';
+    let authorizedCluster: ReturnType<typeof store.getCluster> = null;
+    let authorizedResources: KubernetesResource[] = [];
+    if (payload.clusterId) {
+      authorizedCluster = store.getCluster(String(payload.clusterId), req.orgId!);
+      if (!authorizedCluster) return res.status(404).json({ error: 'Cluster not found' });
+      authorizedResources = store.getClusterResources(authorizedCluster.id, req.orgId!);
+      payload.clusterName = authorizedCluster.name;
+    }
+    if (payload.targetType === 'cluster' && authorizedCluster) {
+      payload.targetName = authorizedCluster.name;
+      payload.targetId = authorizedCluster.id;
+      payload.targetKind = 'Cluster';
+    }
+    if (payload.targetType === 'resource' && authorizedCluster) {
+      const target: any = authorizedResources.find((resource) =>
+        (resource.id === payload.targetId || resource.name === payload.targetName) &&
+        (!payload.namespace || (resource.namespace || 'default') === payload.namespace) &&
+        (!payload.targetKind || resource.kind === payload.targetKind)
+      );
+      if (!target) return res.status(404).json({ error: 'Resource not found in this organization cluster' });
+      payload.targetId = target.id;
+      payload.targetName = target.name;
+      payload.targetKind = target.kind;
+      payload.namespace = target.namespace;
+      payload.resourceSpec = target.spec || target.specSummary;
+      payload.resourceStatus = target.status || target.statusSummary;
+      payload.health = target.health;
+    }
+    if (authorizedCluster && Array.isArray(payload.incidents)) {
+      const allowedIds = new Set(store.getIncidents(req.orgId!, { clusterId: authorizedCluster.id }).map((incident) => incident.id));
+      payload.incidents = payload.incidents
+        .filter((incident: any) => incident && allowedIds.has(String(incident.id)))
+        .map((incident: any) => {
+          const stored = store.getIncident(String(incident.id), req.orgId!);
+          return stored ? {
+            id: stored.id,
+            title: stored.title,
+            severity: stored.severity,
+            incidentType: stored.incidentType,
+            firstSeenAt: stored.firstSeenAt,
+            occurrenceCount: stored.occurrenceCount
+          } : null;
+        }).filter(Boolean);
+    } else {
+      payload.incidents = [];
+    }
+    if (authorizedCluster) {
+      const incidentCount = store.getIncidents(req.orgId!, { clusterId: authorizedCluster.id })
+        .filter((incident) => !['RESOLVED', 'CLOSED'].includes(incident.status)).length;
+      payload.clusterSummary = {
+        totalNodes: authorizedResources.filter((resource) => resource.kind === 'Node').length,
+        totalWorkloads: authorizedResources.filter((resource) => ['Deployment', 'StatefulSet', 'DaemonSet', 'Job', 'CronJob'].includes(resource.kind)).length,
+        totalPods: authorizedResources.filter((resource) => resource.kind === 'Pod').length,
+        totalServices: authorizedResources.filter((resource) => resource.kind === 'Service').length,
+        totalIngresses: authorizedResources.filter((resource) => resource.kind === 'Ingress').length,
+        totalPvcs: authorizedResources.filter((resource) => resource.kind === 'PersistentVolumeClaim').length,
+        activeIncidentsCount: incidentCount
+      };
+      payload.replicas = undefined;
+      payload.statusText = undefined;
+      if (payload.targetType === 'cluster') payload.health = authorizedCluster.status === 'connected' || authorizedCluster.status === 'HEALTHY' ? 'HEALTHY' : 'WARNING';
+    }
+    delete payload.relatedResources;
+    delete payload.backingPods;
+    delete payload.metrics;
+    if (typeof payload.userPrompt === 'string') payload.userPrompt = payload.userPrompt.slice(0, 2000);
     if (!payload.targetName) {
       payload.targetName = payload.clusterName || 'Kubernetes Cluster';
     }
@@ -1779,7 +1858,7 @@ app.post(
   '/api/v1/incidents/:id/remediation/approve',
   requireUserAuth,
   requireOrgMembership,
-  requirePermission('remediation.approve'),
+  requirePermission(['remediation.approve', 'remediation.execute']),
   (req: AuthenticatedUserRequest, res) => {
     const entitlement = entitlementService.canExecuteRemediation(req.orgId!);
     if (!entitlement.allowed) {
@@ -1889,6 +1968,7 @@ app.post(
   requireUserAuth,
   requireOrgMembership,
   requirePermission('remediation.approve'),
+  requirePermission('remediation.execute'),
   (req: AuthenticatedUserRequest, res) => {
     const parsed = RollbackRemediationSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -2436,7 +2516,14 @@ app.post('/api/v1/billing/checkout/confirm', requireUserAuth, requireOrgMembersh
         }
       : undefined;
 
-    if (parsed.data.sessionId) {
+    if (parsed.data.sessionId && paymentVerification && parsed.data.planId) {
+      const verificationId = paymentVerification.razorpayOrderId || paymentVerification.razorpaySubscriptionId;
+      if (verificationId !== parsed.data.sessionId) {
+        return res.status(400).json({ error: 'Checkout session does not match the verified payment' });
+      }
+      const interval = parsed.data.interval || parsed.data.billingInterval || 'MONTHLY';
+      result = await billingService.confirmCheckout(req.orgId!, parsed.data.planId, interval, actor, paymentVerification);
+    } else if (parsed.data.sessionId) {
       result = await billingService.confirmCheckout(parsed.data.sessionId, req.orgId!, actor, paymentVerification);
     } else {
       const planId = parsed.data.planId || 'PRO';
@@ -2771,12 +2858,15 @@ async function startServer() {
     await verifyProductionPersistence();
   } catch (err: any) {
     console.warn('[SkyOps Server] Persistence verification notice:', err?.message || err);
+    if (isProduction) throw err;
   }
 
   try {
     await store.initPersistence();
+    await webhookService.initialize();
   } catch (err: any) {
     console.warn('[SkyOps Server] Store persistence init notice:', err?.message || err);
+    if (isProduction) throw err;
   }
 
   if (process.env.NODE_ENV !== 'production') {

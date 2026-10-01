@@ -1,19 +1,5 @@
-import { getApps, initializeApp } from 'firebase/app';
-import {
-  getFirestore,
-  doc,
-  getDoc,
-  setDoc,
-  updateDoc,
-  deleteDoc,
-  collection,
-  query,
-  where,
-  orderBy,
-  limit,
-  getDocs,
-  writeBatch
-} from 'firebase/firestore';
+import { getApps, initializeApp, applicationDefault, cert } from 'firebase-admin/app';
+import { getFirestore, Firestore, Query, DocumentReference, WriteBatch } from 'firebase-admin/firestore';
 import crypto from 'crypto';
 
 import {
@@ -74,12 +60,12 @@ export function logGlobalQuotaWarningOnce(op: string): void {
 }
 
 class DocRefWrapper {
-  constructor(public docRef: any, public id: string) {}
+  constructor(public docRef: DocumentReference, public id: string) {}
 
   public async get(): Promise<{ exists: boolean; data: () => any }> {
     try {
-      const snap = await getDoc(this.docRef);
-      return { exists: snap.exists(), data: () => snap.data() };
+      const snap = await this.docRef.get();
+      return { exists: snap.exists, data: () => snap.data() };
     } catch (err: any) {
       if (isGlobalQuotaError(err)) {
         logGlobalQuotaWarningOnce('DocRefWrapper.get');
@@ -91,7 +77,7 @@ class DocRefWrapper {
 
   public async set(data: any, options?: { merge?: boolean }): Promise<void> {
     try {
-      await setDoc(this.docRef, data, options || {});
+      await this.docRef.set(data, options || {});
     } catch (err: any) {
       if (isGlobalQuotaError(err)) {
         logGlobalQuotaWarningOnce('DocRefWrapper.set');
@@ -103,7 +89,7 @@ class DocRefWrapper {
 
   public async update(data: any): Promise<void> {
     try {
-      await updateDoc(this.docRef, data);
+      await this.docRef.update(data);
     } catch (err: any) {
       if (isGlobalQuotaError(err)) {
         logGlobalQuotaWarningOnce('DocRefWrapper.update');
@@ -115,7 +101,7 @@ class DocRefWrapper {
 
   public async delete(): Promise<void> {
     try {
-      await deleteDoc(this.docRef);
+      await this.docRef.delete();
     } catch (err: any) {
       if (isGlobalQuotaError(err)) {
         logGlobalQuotaWarningOnce('DocRefWrapper.delete');
@@ -127,24 +113,24 @@ class DocRefWrapper {
 }
 
 class CollectionRefWrapper {
-  constructor(private db: any, private name: string, private constraints: any[] = []) {}
+  constructor(private db: Firestore, private name: string, private constraints: Array<(query: Query) => Query> = []) {}
 
   public doc(id?: string): DocRefWrapper {
     const docId = id || crypto.randomUUID();
-    return new DocRefWrapper(doc(this.db, this.name, docId), docId);
+    return new DocRefWrapper(this.db.collection(this.name).doc(docId), docId);
   }
 
   public where(field: string, op: any, val: any): CollectionRefWrapper {
     if (val === undefined) return this;
-    return new CollectionRefWrapper(this.db, this.name, [...this.constraints, where(field, op, val)]);
+    return new CollectionRefWrapper(this.db, this.name, [...this.constraints, (q) => q.where(field, op, val)]);
   }
 
   public orderBy(field: string, direction?: 'asc' | 'desc'): CollectionRefWrapper {
-    return new CollectionRefWrapper(this.db, this.name, [...this.constraints, orderBy(field, direction || 'asc')]);
+    return new CollectionRefWrapper(this.db, this.name, [...this.constraints, (q) => q.orderBy(field, direction || 'asc')]);
   }
 
   public limit(n: number): CollectionRefWrapper {
-    return new CollectionRefWrapper(this.db, this.name, [...this.constraints, limit(n)]);
+    return new CollectionRefWrapper(this.db, this.name, [...this.constraints, (q) => q.limit(n)]);
   }
 
   public async get(): Promise<{
@@ -153,9 +139,9 @@ class CollectionRefWrapper {
     docs: Array<{ id: string; ref: DocRefWrapper; data: () => any }>;
   }> {
     try {
-      const colRef = collection(this.db, this.name);
-      const q = this.constraints.length > 0 ? query(colRef, ...this.constraints) : colRef;
-      const snap = await getDocs(q);
+      const colRef = this.db.collection(this.name);
+      const q = this.constraints.reduce((current, apply) => apply(current), colRef as Query);
+      const snap = await q.get();
       return {
         empty: snap.empty,
         size: snap.size,
@@ -176,9 +162,9 @@ class CollectionRefWrapper {
 }
 
 class BatchWrapper {
-  private batch: any;
-  constructor(db: any) {
-    this.batch = writeBatch(db);
+  private batch: WriteBatch;
+  constructor(db: Firestore) {
+    this.batch = db.batch();
   }
   public set(target: any, data: any, options?: any): void {
     const ref = target.docRef ? target.docRef : target;
@@ -202,7 +188,7 @@ class BatchWrapper {
 }
 
 class FirebaseStoreWrapper {
-  constructor(private db: any) {}
+  constructor(private db: Firestore) {}
   public collection(name: string): CollectionRefWrapper {
     return new CollectionRefWrapper(this.db, name);
   }
@@ -210,7 +196,7 @@ class FirebaseStoreWrapper {
     return new BatchWrapper(this.db);
   }
   public async terminate(): Promise<void> {
-    // client handles lifecycle
+    await this.db.terminate();
   }
 }
 
@@ -262,11 +248,7 @@ export class FirestoreStore implements IPersistenceStore {
         ? apps[0]
         : initializeApp({
             projectId: this.projectId,
-            apiKey: fallbackConfig.apiKey,
-            authDomain: fallbackConfig.authDomain,
-            appId: fallbackConfig.appId,
-            storageBucket: fallbackConfig.storageBucket,
-            messagingSenderId: fallbackConfig.messagingSenderId
+            credential: config?.keyFilename ? cert(config.keyFilename) : applicationDefault()
           });
     const firestoreInstance = this.databaseId === '(default)' ? getFirestore(app) : getFirestore(app, this.databaseId);
     this.firestore = new FirebaseStoreWrapper(firestoreInstance);
@@ -545,7 +527,7 @@ export class FirestoreStore implements IPersistenceStore {
     }
   }
 
-  public async getUserOrganizations(userId: string, email?: string): Promise<Organization[]> {
+  public async getUserOrganizations(userId: string, _email?: string): Promise<Organization[]> {
     try {
       await this.ensureConnected();
       const orgIds = new Set<string>();
@@ -557,17 +539,6 @@ export class FirestoreStore implements IPersistenceStore {
       for (const d of userMemberships.docs) {
         const data = d.data();
         if (data.orgId) orgIds.add(data.orgId);
-      }
-
-      if (email) {
-        const emailMemberships = await this.firestore
-          .collection('memberships')
-          .where('email', '==', email.toLowerCase())
-          .get();
-        for (const d of emailMemberships.docs) {
-          const data = d.data();
-          if (data.orgId) orgIds.add(data.orgId);
-        }
       }
 
       const orgs: Organization[] = [];
@@ -1207,6 +1178,12 @@ export class FirestoreStore implements IPersistenceStore {
     }
   }
 
+  public async listAllWebhooks(): Promise<WebhookConfig[]> {
+    await this.ensureConnected();
+    const snap = await this.firestore.collection('webhooks').get();
+    return snap.docs.map((d) => d.data() as WebhookConfig);
+  }
+
   public async saveWebhook(webhook: WebhookConfig): Promise<WebhookConfig> {
     await this.ensureConnected();
     try {
@@ -1262,6 +1239,12 @@ export class FirestoreStore implements IPersistenceStore {
     } catch (err: any) {
       throw err;
     }
+  }
+
+  public async listAllWebhookDeliveries(limit = 500): Promise<WebhookDeliveryRecord[]> {
+    await this.ensureConnected();
+    const snap = await this.firestore.collection('webhookDeliveries').orderBy('timestamp', 'desc').limit(limit).get();
+    return snap.docs.map((d) => d.data() as WebhookDeliveryRecord);
   }
 
   // --- Subscriptions & Invoices ---

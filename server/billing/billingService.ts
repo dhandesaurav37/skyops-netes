@@ -370,7 +370,8 @@ export class BillingService {
     arg2: any,
     arg3?: any,
     arg4?: any,
-    arg5?: any
+    arg5?: any,
+    trustedGatewayEvent = false
   ): Promise<{ subscription: Subscription; invoice: Invoice }> {
     let orgId: string;
     let planId: PlanId;
@@ -395,18 +396,41 @@ export class BillingService {
       paymentVerification = arg5;
     }
 
-    // Cryptographically verify Razorpay signature if payment verification details provided
+    const provider = getBillingProvider();
+    if (process.env.NODE_ENV === 'production' && !paymentVerification && !trustedGatewayEvent) {
+      throw new Error('A verified payment is required to activate a paid subscription');
+    }
+    if (process.env.NODE_ENV === 'production' && provider.name !== 'razorpay' && !trustedGatewayEvent) {
+      throw new Error('Paid billing is unavailable until a real payment provider is configured');
+    }
     if (paymentVerification) {
-      const provider = getBillingProvider();
-      if ('verifyPaymentSignature' in provider) {
-        const isValid = (provider as any).verifyPaymentSignature(
-          paymentVerification,
-          paymentVerification.razorpayPaymentId,
-          paymentVerification.razorpaySignature
-        );
-        if (!isValid) {
-          throw new Error('Razorpay payment signature verification failed');
+      let validPayment = false;
+      if (process.env.NODE_ENV === 'production') {
+        if (provider.name !== 'razorpay' || !provider.verifyPaymentForCheckout) {
+          throw new Error('Payment provider cannot verify checkout ownership and amount');
         }
+        const pricing = PLANS[planId]?.pricing[interval];
+        validPayment = await provider.verifyPaymentForCheckout({
+          orderId: paymentVerification.razorpayOrderId,
+          subscriptionId: paymentVerification.razorpaySubscriptionId,
+          paymentId: paymentVerification.razorpayPaymentId,
+          signature: paymentVerification.razorpaySignature,
+          orgId,
+          planId,
+          billingInterval: interval,
+          expectedAmount: pricing?.totalPrice || 0
+        });
+      } else if (provider.verifyPaymentSignature) {
+        validPayment = provider.verifyPaymentSignature(paymentVerification);
+      }
+      if (!validPayment) throw new Error('Payment verification failed for this organization, plan, or amount');
+    }
+
+    if (paymentVerification?.razorpayPaymentId) {
+      const current = store.getSubscription(orgId);
+      if (current?.latestPaymentId === paymentVerification.razorpayPaymentId) {
+        const existingInvoice = store.getInvoices(orgId).find((invoice) => invoice.providerInvoiceId === paymentVerification!.razorpayPaymentId);
+        if (existingInvoice) return { subscription: current, invoice: existingInvoice };
       }
     }
 
@@ -708,7 +732,7 @@ export class BillingService {
           await this.confirmCheckout(orgId, planId, billingInterval, {
             id: 'webhook',
             name: 'Payment Gateway Webhook'
-          });
+          }, undefined, true);
         }
         break;
       }

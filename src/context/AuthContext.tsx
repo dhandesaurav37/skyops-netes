@@ -72,7 +72,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const organisationName =
         options?.organisationName ||
         `${fullName}'s Team`;
-      const role: Role = options?.role || 'OWNER';
 
       if (!snap.exists()) {
         await setDoc(
@@ -82,7 +81,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             organisationName,
             fullName,
             email,
-            role,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp()
           }
@@ -101,9 +99,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
         if (!existingData.organisationName && organisationName) {
           updates.organisationName = organisationName;
-        }
-        if (!existingData.role) {
-          updates.role = role;
         }
 
         await setDoc(userRef, updates, { merge: true });

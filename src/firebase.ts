@@ -1,6 +1,7 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
   getAuth,
+  connectAuthEmulator,
   GoogleAuthProvider,
   signInWithPopup,
   signInWithEmailAndPassword,
@@ -11,7 +12,7 @@ import {
   updateProfile,
   User as FirebaseUser
 } from 'firebase/auth';
-import { getFirestore, initializeFirestore, setLogLevel, Firestore } from 'firebase/firestore';
+import { getFirestore, initializeFirestore, setLogLevel, Firestore, connectFirestoreEmulator } from 'firebase/firestore';
 import {
   getStorage,
   ref,
@@ -46,6 +47,10 @@ export const app = !getApps().length ? initializeApp(resolvedFirebaseConfig) : g
 
 // Initialize Firebase Authentication
 export const auth = getAuth(app);
+const authEmulator = env.VITE_FIREBASE_AUTH_EMULATOR_URL;
+if (authEmulator && env.MODE !== 'production') {
+  connectAuthEmulator(auth, authEmulator, { disableWarnings: true });
+}
 
 // Suppress internal Firestore gRPC idle stream warnings
 try {
@@ -67,6 +72,11 @@ try {
       : getFirestore(app);
 }
 export const db: Firestore = firestoreInstance;
+const firestoreEmulator = env.VITE_FIRESTORE_EMULATOR_HOST;
+if (firestoreEmulator && env.MODE !== 'production') {
+  const [host, rawPort] = String(firestoreEmulator).split(':');
+  connectFirestoreEmulator(db, host, Number(rawPort) || 8080);
+}
 
 // Initialize Firebase Cloud Storage with canonical bucket
 export const storage: FirebaseStorage = getStorage(app, `gs://${cleanStorageBucket}`);

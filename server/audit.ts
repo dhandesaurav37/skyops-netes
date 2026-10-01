@@ -3,6 +3,7 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { getPersistenceConfig, safeWriteJsonSync } from './persistence';
 import { getPersistenceStore } from './persistence/index';
+import { getRequestAuditContext } from './middleware/requestContext';
 
 /**
  * Computes deterministic SHA-256 integrity hash for an audit event
@@ -22,6 +23,8 @@ export function computeAuditHash(
     event.resourceType,
     event.resourceId,
     event.result,
+    event.correlationId || '',
+    event.ipAddress || '',
     prevHash || '',
     JSON.stringify(event.details || {})
   ];
@@ -89,10 +92,13 @@ class AuditService {
     const timestamp = Date.now();
     const prevHash = event.prevHash || this.latestHashByOrg.get(event.orgId) || '';
 
+    const requestContext = getRequestAuditContext();
     const partialEvent: Omit<AuditEvent, 'hash'> = {
       ...event,
       id,
       timestamp,
+      correlationId: event.correlationId || requestContext?.requestId,
+      ipAddress: event.ipAddress || requestContext?.ipAddress,
       prevHash: prevHash || undefined
     };
 
@@ -416,4 +422,3 @@ class AuditService {
 }
 
 export const auditService = new AuditService();
-

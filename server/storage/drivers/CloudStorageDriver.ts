@@ -1,8 +1,6 @@
-import {
-  IStorageDriver,
-  StorageObjectMetadata,
-  StorageUploadResult
-} from '../types';
+import { applicationDefault, getApps, initializeApp } from 'firebase-admin/app';
+import { getStorage } from 'firebase-admin/storage';
+import { IStorageDriver, StorageCategory, StorageObjectMetadata, StorageUploadResult } from '../types';
 import { MemoryStorageDriver } from './MemoryStorageDriver';
 
 export interface CloudStorageConfig {
@@ -13,193 +11,113 @@ export interface CloudStorageConfig {
   useFallbackOnFailure?: boolean;
 }
 
-/**
- * Production driver for Firebase Cloud Storage.
- * Interacts with Firebase Cloud Storage REST endpoints with automatic
- * resilient fallback to in-memory store in local dev and isolated test suites.
- */
+/** Server-only Google Cloud Storage driver. Admin credentials bypass client rules;
+ * authorization remains at the API boundary and Storage rules stay restrictive. */
 export class CloudStorageDriver implements IStorageDriver {
   public readonly driverName = 'firebase-cloud-storage';
-  private bucketName: string;
-  private apiKey?: string;
-  private accessToken?: string;
-  private fallbackDriver: MemoryStorageDriver;
-  private useFallbackOnFailure: boolean;
+  private readonly bucket: ReturnType<ReturnType<typeof getStorage>['bucket']>;
+  private readonly fallbackDriver: MemoryStorageDriver;
+  private readonly useFallbackOnFailure: boolean;
 
   constructor(config: CloudStorageConfig) {
-    this.bucketName = config.bucketName.replace(/^gs:\/\//, '').trim();
-    this.apiKey = config.apiKey || process.env.VITE_FIREBASE_API_KEY;
-    this.accessToken = config.accessToken;
-    this.useFallbackOnFailure = config.useFallbackOnFailure ?? true;
-    this.fallbackDriver = new MemoryStorageDriver(this.bucketName);
+    const bucketName = config.bucketName.replace(/^gs:\/\//, '').trim();
+    const app = getApps()[0] || initializeApp({
+      projectId: config.projectId || process.env.FIREBASE_PROJECT_ID || process.env.VITE_FIREBASE_PROJECT_ID,
+      credential: applicationDefault(),
+      storageBucket: bucketName
+    });
+    this.bucket = getStorage(app).bucket(bucketName);
+    this.useFallbackOnFailure = config.useFallbackOnFailure ?? process.env.NODE_ENV !== 'production';
+    this.fallbackDriver = new MemoryStorageDriver(bucketName);
   }
 
-  private getBaseUrl(): string {
-    return `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(this.bucketName)}/o`;
-  }
-
-  private getAuthHeaders(): Record<string, string> {
-    const headers: Record<string, string> = {};
-    if (this.accessToken) {
-      headers['Authorization'] = `Bearer ${this.accessToken}`;
-    }
-    return headers;
-  }
-
-  public async upload(
-    storagePath: string,
-    buffer: Buffer,
-    metadata: StorageObjectMetadata
-  ): Promise<StorageUploadResult> {
+  public async upload(storagePath: string, buffer: Buffer, metadata: StorageObjectMetadata): Promise<StorageUploadResult> {
     try {
-      const url = `${this.getBaseUrl()}?uploadType=media&name=${encodeURIComponent(storagePath)}${
-        this.apiKey ? `&key=${this.apiKey}` : ''
-      }`;
-
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': metadata.contentType,
-          'Content-Length': String(buffer.length),
-          'x-goog-meta-orgid': metadata.orgId,
-          'x-goog-meta-category': metadata.category,
-          'x-goog-meta-checksum': metadata.checksumSha256,
-          ...this.getAuthHeaders()
-        },
-        body: buffer
-      });
-
-      if (!res.ok) {
-        throw new Error(`Firebase Storage HTTP Error ${res.status}: ${res.statusText}`);
+      const file = this.bucket.file(storagePath);
+      const customMetadata: Record<string, string> = {
+        orgId: metadata.orgId,
+        category: metadata.category,
+        filename: metadata.filename,
+        checksumSha256: metadata.checksumSha256
+      };
+      for (const [key, value] of Object.entries(metadata.customMetadata || {})) {
+        if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') customMetadata[key] = String(value);
       }
-
-      const data = (await res.json()) as any;
-      const downloadToken = data.downloadTokens ? data.downloadTokens.split(',')[0] : '';
-      const publicUrl = downloadToken
-        ? `${this.getBaseUrl()}/${encodeURIComponent(storagePath)}?alt=media&token=${downloadToken}`
-        : `${this.getBaseUrl()}/${encodeURIComponent(storagePath)}?alt=media`;
-
-      // Keep in-sync with fallback cache
-      await this.fallbackDriver.upload(storagePath, buffer, metadata);
-
+      await file.save(buffer, {
+        resumable: false,
+        validation: 'crc32c',
+        metadata: { contentType: metadata.contentType, metadata: customMetadata }
+      });
       return {
         storagePath,
-        storageBucket: this.bucketName,
+        storageBucket: this.bucket.name,
         sizeBytes: buffer.length,
         checksumSha256: metadata.checksumSha256,
         contentType: metadata.contentType,
-        publicUrl,
-        metadata: data.metadata
+        publicUrl: `gs://${this.bucket.name}/${storagePath}`,
+        metadata: customMetadata
       };
-    } catch (err: any) {
-      if (this.useFallbackOnFailure) {
-        console.warn(
-          `[CloudStorageDriver] Direct cloud upload to gs://${this.bucketName} deferred to resilient local driver: ${err?.message || err}`
-        );
-        return this.fallbackDriver.upload(storagePath, buffer, metadata);
-      }
+    } catch (err) {
+      if (this.useFallbackOnFailure) return this.fallbackDriver.upload(storagePath, buffer, metadata);
       throw err;
     }
   }
 
   public async download(storagePath: string): Promise<Buffer> {
     try {
-      const url = `${this.getBaseUrl()}/${encodeURIComponent(storagePath)}?alt=media${
-        this.apiKey ? `&key=${this.apiKey}` : ''
-      }`;
-
-      const res = await fetch(url, {
-        method: 'GET',
-        headers: this.getAuthHeaders()
-      });
-
-      if (!res.ok) {
-        throw new Error(`Firebase Storage download HTTP ${res.status}: ${res.statusText}`);
-      }
-
-      const arrayBuffer = await res.arrayBuffer();
-      return Buffer.from(arrayBuffer);
-    } catch (err: any) {
-      if (this.useFallbackOnFailure && (await this.fallbackDriver.exists(storagePath))) {
-        return this.fallbackDriver.download(storagePath);
-      }
+      const [contents] = await this.bucket.file(storagePath).download();
+      return contents;
+    } catch (err) {
+      if (this.useFallbackOnFailure && await this.fallbackDriver.exists(storagePath)) return this.fallbackDriver.download(storagePath);
       throw err;
     }
   }
 
   public async delete(storagePath: string): Promise<boolean> {
     try {
-      const url = `${this.getBaseUrl()}/${encodeURIComponent(storagePath)}${
-        this.apiKey ? `&key=${this.apiKey}` : ''
-      }`;
-
-      const res = await fetch(url, {
-        method: 'DELETE',
-        headers: this.getAuthHeaders()
-      });
-
+      await this.bucket.file(storagePath).delete({ ignoreNotFound: true });
       await this.fallbackDriver.delete(storagePath);
-      return res.ok || res.status === 404;
-    } catch (err: any) {
-      if (this.useFallbackOnFailure) {
-        return this.fallbackDriver.delete(storagePath);
-      }
+      return true;
+    } catch (err) {
+      if (this.useFallbackOnFailure) return this.fallbackDriver.delete(storagePath);
       throw err;
     }
   }
 
   public async exists(storagePath: string): Promise<boolean> {
     try {
-      const url = `${this.getBaseUrl()}/${encodeURIComponent(storagePath)}${
-        this.apiKey ? `&key=${this.apiKey}` : ''
-      }`;
-
-      const res = await fetch(url, {
-        method: 'GET',
-        headers: this.getAuthHeaders()
-      });
-
-      if (res.ok) return true;
-      if (res.status === 404) return false;
-      return this.fallbackDriver.exists(storagePath);
-    } catch {
-      return this.fallbackDriver.exists(storagePath);
+      const [exists] = await this.bucket.file(storagePath).exists();
+      return exists;
+    } catch (err) {
+      if (this.useFallbackOnFailure) return this.fallbackDriver.exists(storagePath);
+      throw err;
     }
   }
 
   public async getMetadata(storagePath: string): Promise<StorageObjectMetadata | null> {
     try {
-      const url = `${this.getBaseUrl()}/${encodeURIComponent(storagePath)}${
-        this.apiKey ? `&key=${this.apiKey}` : ''
-      }`;
-
-      const res = await fetch(url, {
-        method: 'GET',
-        headers: this.getAuthHeaders()
-      });
-
-      if (!res.ok) {
-        return this.fallbackDriver.getMetadata(storagePath);
-      }
-
-      const data = (await res.json()) as any;
+      const [metadata] = await this.bucket.file(storagePath).getMetadata();
+      const customMetadata = metadata.metadata || {};
       return {
-        orgId: data.metadata?.orgId || '',
-        category: data.metadata?.category || 'incident-artifacts',
-        filename: data.name?.split('/').pop() || storagePath,
-        contentType: data.contentType || 'application/octet-stream',
-        sizeBytes: Number(data.size || 0),
-        checksumSha256: data.metadata?.checksumSha256 || ''
+        orgId: String(customMetadata.orgId || ''),
+        category: String(customMetadata.category || 'incident-artifacts') as StorageCategory,
+        filename: String(customMetadata.filename || storagePath.split('/').pop() || storagePath),
+        contentType: metadata.contentType || 'application/octet-stream',
+        sizeBytes: Number(metadata.size || 0),
+        checksumSha256: String(customMetadata.checksumSha256 || '')
       };
-    } catch {
-      return this.fallbackDriver.getMetadata(storagePath);
+    } catch (err: any) {
+      if (err?.code === 404) return this.useFallbackOnFailure ? this.fallbackDriver.getMetadata(storagePath) : null;
+      if (this.useFallbackOnFailure) return this.fallbackDriver.getMetadata(storagePath);
+      throw err;
     }
   }
 
   public async getDownloadUrl(storagePath: string): Promise<string> {
-    const url = `${this.getBaseUrl()}/${encodeURIComponent(storagePath)}?alt=media${
-      this.apiKey ? `&key=${this.apiKey}` : ''
-    }`;
+    const [url] = await this.bucket.file(storagePath).getSignedUrl({
+      action: 'read',
+      expires: Date.now() + 15 * 60 * 1000
+    });
     return url;
   }
 }

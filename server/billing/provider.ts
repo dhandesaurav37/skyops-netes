@@ -81,6 +81,16 @@ export interface BillingProvider {
     paymentId?: string,
     signature?: string
   ): boolean;
+  verifyPaymentForCheckout?(input: {
+    orderId?: string;
+    subscriptionId?: string;
+    paymentId: string;
+    signature: string;
+    orgId: string;
+    planId: PlanId;
+    billingInterval: BillingInterval;
+    expectedAmount: number;
+  }): Promise<boolean>;
   verifyWebhookSignature(payload: string | Buffer, signature: string): { valid: boolean; event?: BillingWebhookEvent; error?: string };
 }
 
@@ -91,7 +101,7 @@ export interface BillingProvider {
  */
 export class MockBillingProvider implements BillingProvider {
   public name = 'mock';
-  private webhookSecret = process.env.SKYOPS_BILLING_WEBHOOK_SECRET || 'whsec_skyops_sandbox_secret_key_prod';
+  private webhookSecret = process.env.SKYOPS_BILLING_WEBHOOK_SECRET || crypto.randomBytes(32).toString('hex');
 
   public async createCustomer(params: CustomerParams): Promise<string> {
     const hash = crypto.createHash('sha256').update(`${params.orgId}-${params.userEmail}`).digest('hex').substring(0, 16);
@@ -172,7 +182,7 @@ export class MockBillingProvider implements BillingProvider {
       const expBuf = Buffer.from(expectedSig, 'hex');
 
       const isMatching = sigBuf.length === expBuf.length && crypto.timingSafeEqual(sigBuf, expBuf);
-      if (!isMatching && signature !== 'test_bypass_token') {
+      if (!isMatching && !(process.env.NODE_ENV === 'test' && signature === 'test_bypass_token')) {
         return { valid: false, error: 'Invalid HMAC webhook signature' };
       }
 
@@ -198,6 +208,9 @@ export function getBillingProvider(): BillingProvider {
   if (process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET && process.env.NODE_ENV !== 'test') {
     const { RazorpayBillingProvider } = require('./razorpayProvider');
     return new RazorpayBillingProvider();
+  }
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('Production billing requires Razorpay credentials; refusing to use the mock provider');
   }
   return new MockBillingProvider();
 }

@@ -56,6 +56,16 @@ class WebhookService {
     return this.dataFilePath;
   }
 
+  public async initialize(): Promise<void> {
+    const persistence = getPersistenceStore();
+    const [webhooks, deliveries] = await Promise.all([
+      persistence.listAllWebhooks(),
+      persistence.listAllWebhookDeliveries(500)
+    ]);
+    for (const webhook of webhooks) this.webhooks.set(webhook.id, webhook);
+    if (deliveries.length > 0) this.deliveryHistory = deliveries;
+  }
+
   private loadWebhooks(): void {
     if (process.env.NODE_ENV === 'production') {
       // Production uses Cloud Firestore; local JSON is disabled
@@ -102,8 +112,8 @@ class WebhookService {
       orgId: string;
       event: WebhookEventType;
       payload: Record<string, unknown>;
-    }>('WEBHOOK_DELIVERY', async (data) => {
-      await this.executeDelivery(data);
+    }>('WEBHOOK_DELIVERY', async (data, job) => {
+      await this.executeDelivery(data, job.attempts);
     });
   }
 
@@ -253,7 +263,7 @@ class WebhookService {
     orgId: string;
     event: WebhookEventType;
     payload: Record<string, unknown>;
-  }): Promise<void> {
+  }, jobAttempt: number): Promise<void> {
     const wh = this.webhooks.get(data.webhookId);
     if (!wh || !wh.isActive) return;
 
@@ -267,6 +277,9 @@ class WebhookService {
     };
 
     const record = await this.deliverPayload(wh, data.event, fullPayload, data.deliveryId);
+    record.attempts = jobAttempt;
+    const existingRecord = this.deliveryHistory.findIndex((delivery) => delivery.id === record.id);
+    if (existingRecord >= 0) this.deliveryHistory.splice(existingRecord, 1);
     this.deliveryHistory.push(record);
     if (this.deliveryHistory.length > 200) {
       this.deliveryHistory.shift();
@@ -276,9 +289,8 @@ class WebhookService {
     wh.lastDeliveryStatus = record.success ? 'SUCCESS' : 'FAILURE';
     this.saveWebhooks();
 
-    getPersistenceStore().recordWebhookDelivery(record).catch((err) => {
-      console.error('[WebhookService] Failed to persist delivery record to store:', err?.message || err);
-    });
+    await getPersistenceStore().recordWebhookDelivery(record);
+    await getPersistenceStore().saveWebhook(wh);
 
     if (!record.success) {
       throw new Error(`Webhook delivery to ${wh.url} failed: ${record.error}`);

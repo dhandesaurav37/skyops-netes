@@ -58,7 +58,7 @@ export class StorageService {
     } else {
       this.driver = new CloudStorageDriver({
         bucketName: this.bucketName,
-        useFallbackOnFailure: true
+        useFallbackOnFailure: process.env.NODE_ENV !== 'production'
       });
     }
   }

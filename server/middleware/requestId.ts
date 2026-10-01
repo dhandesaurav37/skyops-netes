@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { NextFunction, Request, Response } from 'express';
 import { systemObservability } from '../observability/metrics';
+import { runWithRequestContext } from './requestContext';
 
 export interface CorrelatedRequest extends Request {
   id?: string;
@@ -12,7 +13,10 @@ export function correlationIdMiddleware(
   res: Response,
   next: NextFunction
 ): void {
-  const reqId = (req.headers['x-request-id'] as string) || crypto.randomUUID();
+  const suppliedRequestId = req.headers['x-request-id'];
+  const reqId = typeof suppliedRequestId === 'string' && /^[a-zA-Z0-9._:-]{1,128}$/.test(suppliedRequestId)
+    ? suppliedRequestId
+    : crypto.randomUUID();
   req.id = reqId;
   req.startTime = Date.now();
 
@@ -25,7 +29,7 @@ export function correlationIdMiddleware(
     systemObservability.recordRequest(res.statusCode, duration);
   });
 
-  next();
+  runWithRequestContext({ requestId: reqId, ipAddress: req.ip }, next);
 }
 
 export function sendApiError(

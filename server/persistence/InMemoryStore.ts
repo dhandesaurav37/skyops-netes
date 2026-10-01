@@ -155,13 +155,11 @@ export class InMemoryStore implements IPersistenceStore {
     return true;
   }
 
-  public async getUserOrganizations(userId: string, email?: string): Promise<Organization[]> {
+  public async getUserOrganizations(userId: string, _email?: string): Promise<Organization[]> {
     const orgIds = new Set<string>();
     for (const [orgId, members] of this.members.entries()) {
       if (
-        members.some(
-          (m) => m.userId === userId || (email && m.email.toLowerCase() === email.toLowerCase())
-        )
+        members.some((m) => m.userId === userId)
       ) {
         orgIds.add(orgId);
       }
@@ -480,6 +478,10 @@ export class InMemoryStore implements IPersistenceStore {
     return Array.from(this.webhooks.values()).filter((w) => w.orgId === orgId);
   }
 
+  public async listAllWebhooks(): Promise<WebhookConfig[]> {
+    return Array.from(this.webhooks.values());
+  }
+
   public async saveWebhook(webhook: WebhookConfig): Promise<WebhookConfig> {
     this.webhooks.set(webhook.id, { ...webhook });
     return webhook;
@@ -505,6 +507,10 @@ export class InMemoryStore implements IPersistenceStore {
     if (webhookId) list = list.filter((d) => d.webhookId === webhookId);
     list.sort((a, b) => b.timestamp - a.timestamp);
     return list.slice(0, limit);
+  }
+
+  public async listAllWebhookDeliveries(limit = 500): Promise<WebhookDeliveryRecord[]> {
+    return this.webhookDeliveries.slice().sort((a, b) => b.timestamp - a.timestamp).slice(0, limit);
   }
 
   // --- Subscriptions & Invoices ---

@@ -135,7 +135,9 @@ func defaultStatfs(path string) (*DiskStat, error) {
 		inodesPercent = (float64(usedInodes) / float64(totalInodes)) * 100.0
 	}
 
-	isReadOnly := (stat.Flags & syscall.MS_RDONLY) != 0
+ // MS_RDONLY (Linux) and MNT_RDONLY (Darwin/BSD) use bit 0.
+ const readOnlyMountFlag = 1
+ isReadOnly := (stat.Flags & readOnlyMountFlag) != 0
 
 	return &DiskStat{
 		TotalBytes:        totalBytes,

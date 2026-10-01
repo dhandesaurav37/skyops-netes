@@ -64,6 +64,13 @@ const ConfigSchema = z.object({
         message: 'SKYOPS_DATA_DIR is required in production to specify an explicit persistent storage directory (e.g. /mnt/skyops-data)'
       });
     }
+    if (!values.RAZORPAY_KEY_ID || !values.RAZORPAY_KEY_SECRET || !values.RAZORPAY_WEBHOOK_SECRET) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['RAZORPAY_KEY_ID'],
+        message: 'Production paid billing requires Razorpay key ID, key secret, and webhook secret; mock billing is not permitted.'
+      });
+    }
   }
 });
 
